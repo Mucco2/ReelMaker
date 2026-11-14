@@ -33,6 +33,13 @@ word-by-word captions, a hook title, zoom cuts and clean audio.
    Når videoen er færdig, afspilles den i telefonen. Tryk **Kopiér opslagstekst** for at få teksten og
    hashtags klar til at indsætte i appen. Under **Seneste reels** finder du dine tidligere videoer.
 
+**To slags klip (Klippestil):**
+- **Tale:** til videoer hvor nogen snakker. Pauser og "øh" bliver klippet væk, og der kommer animerede undertekster.
+- **Montage til musik:** til videoer uden tale, fx biler, sport, rejser og gaming. Programmet finder de vildeste
+  øjeblikke ud fra lyd og bevægelse og klipper dem præcist i takt med din musik. Hvert klip får et lille zoom-"slag",
+  og der kommer et flash på beatet. Det vildeste klip kommer først som hook. Vælg musik for det bedste resultat.
+- **Automatisk** (standard) vælger selv ud fra, om der bliver talt.
+
 Programmet forstår dansk tale, fjerner "øh" og pauser og skriver "FØLG FOR MERE" til sidst.
 Teksten til sidst følger videoens sprog.
 Første gang hentes talemodellen (1,6 GB), så den første video tager et par minutter ekstra.
@@ -73,7 +80,7 @@ Første gang hentes talemodellen (1,6 GB), så den første video tager et par mi
 | Fetcher | yt-dlp | Downloads the video when you give it a link |
 | Reference Analyst | yt-dlp + FFmpeg | Studies a reel you like: its length, how often the shot changes, how much silence |
 | Transcriber | OpenAI Whisper (faster-whisper) | Writes down every word with exact timing |
-| Director | built-in rules, or Claude AI | Picks the best part, cuts pauses and "um"/"uh", writes the hook and hashtags |
+| Director | built-in rules, or Claude AI | Picks the best part, cuts pauses and "um"/"uh", writes the hook and hashtags. For videos without speech it switches to **montage mode**: it scans loudness, motion and shot changes, finds the music's beat, and picks the most exciting moments, cut exactly on the beat. With a key, Claude looks at frames to choose them |
 | Cutter | FFmpeg | Cuts the video and turns it into 9:16: face-tracking crop for talking heads, blurred background for everything else. Adds zoom punch-ins on jump cuts and a light colour/sharpness boost |
 | Animator | HyperFrames | Animated captions with the spoken word highlighted, a pop-in hook title, a progress bar and a "follow" call-to-action |
 | Finisher | FFmpeg | Cleans the voice (rumble cut, light denoise, compression), sets loudness to -14 LUFS like the apps use, then exports a 1080x1920 H.264 MP4 |
@@ -98,6 +105,8 @@ you'll need to type the hook text yourself.
 
 | Option | What it does |
 |---|---|
+| `--mode montage` | `auto` (default), `speech` (edit around what's said) or `montage` (best moments cut to the music, for videos without talking) |
+| `--text-language da` | Language for the hook and post text when the video has no speech |
 | `--max-duration 45` | Longest the reel may be, in seconds |
 | `--count 3` | Make 3 different reels from the best moments of one long video |
 | `--hook "text"` | The big title in the first seconds |
@@ -105,7 +114,7 @@ you'll need to type the hook text yourself.
 | `--pacing chill/normal/fast` | How hard to cut pauses |
 | `--caption-style bold/box/clean` | Caption look. `box` puts a coloured box behind the spoken word |
 | `--accent "#FF3366"` | Highlight colour |
-| `--reframe auto/face/crop/blur/fit` | How the video becomes 9:16 |
+| `--reframe auto/face/smart/crop/blur/fit` | How the video becomes 9:16. `smart` is a full-screen crop that follows the action |
 | `--music song.mp3` | Background music. It gets quieter automatically while someone talks |
 | `--cta "LINK IN BIO"` / `--no-cta` | Change or remove the end call-to-action. By default it's "follow for more" in the video's language |
 | `--no-captions`, `--no-zoom`, `--no-progress`, `--no-enhance`, `--keep-fillers` | Turn a feature off |

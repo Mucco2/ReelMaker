@@ -22,25 +22,52 @@ VOICE_CHAIN = ("highpass=f=75,afftdn=nf=-25,"
                "acompressor=threshold=-20dB:ratio=3:attack=5:release=90:makeup=2")
 
 
-def _audio_graph(settings: Settings, music_idx: int | None) -> str:
+MONTAGE_CHAIN = "acompressor=threshold=-16dB:ratio=2:attack=10:release=150"   # no denoise: keep engine/crowd sound
+
+
+def _music_input(settings: Settings, plan: EditPlan) -> list:
+    """Music input args; a montage starts the song at the chosen beat."""
+    montage = plan.mode == "montage"
+    # A montage with a beat grid loops a whole number of beats in the filter instead (stays on the beat).
+    # No input -ss: seeking into an MP3 drops the first hit (bit reservoir), so the start is trimmed in the
+    # filter graph, which is sample-exact.
+    args = [] if (montage and plan.music_loop > 0) else ["-stream_loop", "-1"]
+    return args + ["-i", Path(settings.music).resolve()]
+
+
+def _audio_graph(settings: Settings, music_idx: int | None, plan: EditPlan | None = None,
+                 duration: float = 0.0) -> str:
     """Filtergraph producing [mix] from [0:a] (+ optional music)."""
+    montage = plan is not None and plan.mode == "montage"
     if music_idx is None:
-        return f"[0:a]{VOICE_CHAIN}[mix]"
+        return f"[0:a]{MONTAGE_CHAIN if montage else VOICE_CHAIN}[mix]"
+    if montage:   # the music leads, the original sound sits underneath
+        fade = max(0.0, duration - 1.2)
+        s = max(0.0, plan.music_start)
+        if plan.music_loop > 0:   # cut the song at the first beat; if it's too short, repeat whole beats
+            loop = (f"atrim=start={s:.4f}:end={s + plan.music_loop:.4f},asetpts=PTS-STARTPTS,"
+                    f"aloop=loop=-1:size={int(round(plan.music_loop * 48000))},")
+        else:
+            loop = f"atrim=start={s:.4f},asetpts=PTS-STARTPTS," if s > 0 else ""
+        return (f"[0:a]{MONTAGE_CHAIN},volume=0.32[orig];"
+                f"[{music_idx}:a]aresample=48000,{loop}aformat=channel_layouts=stereo,"
+                f"afade=t=in:st=0:d=0.005,afade=t=out:st={fade:.3f}:d=1.2[mu];"   # keep the first beat's punch
+                f"[orig][mu]amix=inputs=2:duration=first:normalize=0[mix]")
     return (f"[0:a]{VOICE_CHAIN},asplit=2[vo1][vo2];"
             f"[{music_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={settings.music_volume:.3f}[mu];"
             f"[mu][vo2]sidechaincompress=threshold=0.04:ratio=8:attack=15:release=400[duck];"
             f"[vo1][duck]amix=inputs=2:duration=first:normalize=0[mix]")
 
 
-def _measure_loudness(edited: Path, settings: Settings) -> dict | None:
+def _measure_loudness(edited: Path, settings: Settings, plan: EditPlan, duration: float) -> dict | None:
     cmd = [ffmpeg(), "-hide_banner", "-nostats", "-i", edited]
     music_idx = None
     if settings.music:
-        cmd += ["-stream_loop", "-1", "-i", settings.music]
+        cmd += _music_input(settings, plan)
         music_idx = 1
-    graph = _audio_graph(settings, music_idx) + \
+    graph = _audio_graph(settings, music_idx, plan, duration) + \
         f";[mix]loudnorm=I={settings.loudness}:TP=-1.5:LRA=11:print_format=json[out]"
-    cmd += ["-filter_complex", graph, "-map", "[out]", "-f", "null", "-"]
+    cmd += ["-filter_complex", graph, "-map", "[out]", "-t", f"{duration:.3f}", "-f", "null", "-"]
     try:
         proc = run(cmd, what="loudness measurement")
     except PipelineError as e:
@@ -76,7 +103,7 @@ def finish(edited: Path, overlay: OverlayResult, plan: EditPlan, settings: Setti
     final = out_dir / "reel.mp4"
 
     log(AGENT, "Measuring loudness...")
-    meas = _measure_loudness(edited, settings)
+    meas = _measure_loudness(edited, settings, plan, duration)
 
     cmd = [ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-i", edited.resolve()]
     idx = 1
@@ -89,11 +116,12 @@ def finish(edited: Path, overlay: OverlayResult, plan: EditPlan, settings: Setti
         v_graph = f"[0:v]ass={overlay.path.name},format=yuv420p[v]"   # relative path: run from work dir
     music_idx = None
     if settings.music:
-        cmd += ["-stream_loop", "-1", "-i", Path(settings.music).resolve()]
+        cmd += _music_input(settings, plan)
         music_idx = idx
         idx += 1
 
-    a_graph = _audio_graph(settings, music_idx) + f";[mix]{_loudnorm(settings, meas)},aresample=48000[a]"
+    a_graph = _audio_graph(settings, music_idx, plan, duration) + \
+        f";[mix]{_loudnorm(settings, meas)},aresample=48000[a]"
     cmd += ["-filter_complex", f"{v_graph};{a_graph}", "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-level:v", "4.2",
             "-pix_fmt", "yuv420p", "-r", str(FPS), "-g", str(FPS * 2), "-maxrate", "12M", "-bufsize", "24M",

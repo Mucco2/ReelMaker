@@ -243,3 +243,18 @@ class Stopwatch:
 
 def python_exe() -> str:
     return sys.executable
+
+
+def load_saved_api_key() -> None:
+    """Pick up an Anthropic key saved in Windows (by the app or `setx`) even if this process was started
+    from a window that was opened before the key was saved."""
+    if os.environ.get("ANTHROPIC_API_KEY") or os.name != "nt":
+        return
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+            val, _ = winreg.QueryValueEx(k, "ANTHROPIC_API_KEY")
+        if isinstance(val, str) and val.strip():
+            os.environ["ANTHROPIC_API_KEY"] = val.strip()
+    except OSError:
+        pass

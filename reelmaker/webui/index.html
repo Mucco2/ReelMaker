@@ -49,6 +49,24 @@ header{position:relative;z-index:2;height:68px;display:flex;align-items:center;g
 .chip .dot{width:8px;height:8px;border-radius:50%;background:var(--faint)}
 .chip.on{color:#d7ffe9;border-color:rgba(46,229,157,.3);background:rgba(46,229,157,.08)}
 .chip.on .dot{background:var(--ok);box-shadow:0 0 10px var(--ok)}
+button.chip{cursor:pointer;transition:.18s}
+button.chip:hover{border-color:var(--line-2);color:var(--text);background:var(--panel-2)}
+button.chip:not(.on){color:#e9e3ff;border-color:rgba(124,92,255,.45);background:rgba(124,92,255,.12)}
+button.chip:not(.on) .dot{background:#a78bfa;box-shadow:0 0 10px #a78bfa}
+.mbox .mic.ai{background:linear-gradient(135deg,rgba(124,92,255,.25),rgba(255,46,126,.2));color:#e9d5ff}
+.msub{color:var(--muted);font-size:13px;margin:0 0 16px}
+.aisteps{margin:0 0 14px;padding:0;list-style:none;counter-reset:s}
+.aisteps li{counter-increment:s;display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:13px;color:#d6d6e6}
+.aisteps li:first-child{border-top:0}
+.aisteps li:before{content:counter(s);width:24px;height:24px;border-radius:8px;display:grid;place-items:center;font-size:12px;font-weight:800;background:var(--grad);flex:none}
+.aisteps li .btn{margin-left:auto}
+.aistatus{min-height:20px;margin:10px 0 4px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}
+.aistatus.ok{color:var(--ok)} .aistatus.bad{color:#ff8fa3} .aistatus.busy{color:var(--muted)}
+.spin{width:15px;height:15px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:#fff;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.aion{display:flex;align-items:center;gap:10px;padding:14px;border-radius:13px;background:rgba(46,229,157,.08);border:1px solid rgba(46,229,157,.3);color:#d7ffe9;font-weight:600}
+.aion .dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok)}
+.aion code{font:12px Consolas,monospace;color:var(--muted);margin-left:auto}
 
 /* buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:38px;padding:0 15px;border-radius:12px;border:1px solid var(--line-2);background:var(--panel-2);font-weight:600;font-size:13px;cursor:pointer;transition:.18s;white-space:nowrap}
@@ -320,7 +338,7 @@ select option{background:#15151f}
   <div class="brand"><h1>ReelMaker</h1><p>Automatisk klipning til korte videoer</p></div>
   <div class="platforms"><span>TikTok</span><span>Instagram Reels</span><span>YouTube Shorts</span><span>Facebook</span></div>
   <div class="hspace"></div>
-  <div class="chip" id="aiChip" title="Sæt ANTHROPIC_API_KEY for at lade Claude vælge de bedste øjeblikke og skrive hook og hashtags"><span class="dot"></span><span id="aiText">Claude AI · fra</span></div>
+  <button class="chip" id="aiChip" title="Lad Claude vælge de bedste øjeblikke og skrive hook og hashtags"><span class="dot"></span><span id="aiText">Slå Claude AI til</span></button>
   <button class="btn" id="openRecent"><i data-ic="clock"></i>Seneste reels</button>
 </header>
 
@@ -370,6 +388,10 @@ select option{background:#15151f}
 
       <div class="card">
         <div class="card-h"><div class="step">2</div><div><h2>Indhold</h2><p>Hvad skal videoen sige, og hvor lang skal den være</p></div></div>
+        <div class="field">
+          <div class="label">Klippestil <em id="modeHint">vælger selv ud fra om der bliver talt</em></div>
+          <div class="seg" data-seg="mode"><button data-val="auto">Automatisk</button><button data-val="speech">Tale</button><button data-val="montage">Montage til musik</button></div>
+        </div>
         <div class="field">
           <div class="label">Hook-tekst <em>valgfri · vises stort i starten</em></div>
           <div class="input"><i data-ic="type"></i><input id="hook" data-opt="hook" maxlength="60" placeholder="Fx: Jeg droppede telefonen i 30 dage"></div>
@@ -431,7 +453,7 @@ select option{background:#15151f}
       <div class="card">
         <div class="card-h"><div class="step">4</div><div><h2>Lyd og afslutning</h2><p>Baggrundsmusik og teksten til sidst</p></div></div>
         <div class="field">
-          <div class="label">Baggrundsmusik <em>valgfri · skrues automatisk ned når der tales</em></div>
+          <div class="label">Baggrundsmusik <em id="musicHint">valgfri · skrues automatisk ned når der tales</em></div>
           <div class="music" id="musicBox"><div class="mi"><i data-ic="music"></i></div><div class="mn" id="musicName">Ingen musik valgt</div>
             <button class="btn sm" id="pickMusic">Vælg musik</button><button class="btn sm ghost" id="clearMusic" title="Fjern"><i data-ic="x"></i></button></div>
         </div>
@@ -510,6 +532,29 @@ select option{background:#15151f}
 </aside>
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="mbox"><div class="mic"><i data-ic="alert"></i></div><h3 id="mTitle">Noget gik galt</h3><div id="mText" style="color:var(--muted);font-size:13px"></div><pre id="mPre"></pre><div class="mact"><button class="btn primary" id="mOk">OK</button></div></div></div>
+<div class="modal" id="aiModal"><div class="mbox">
+  <div class="mic ai"><i data-ic="sparkles"></i></div>
+  <h3>Claude AI</h3>
+  <p class="msub">Med Claude vælger programmet selv de bedste øjeblikke og skriver en fængende hook, en beskrivelse og hashtags på videoens sprog.</p>
+  <div id="aiOff">
+    <ol class="aisteps">
+      <li><span><b>Opret en nøgle</b> på Anthropics side: log ind, vælg <i>API keys</i> og tryk <i>Create key</i>.</span><button class="btn sm" id="openKeys"><i data-ic="external"></i>Åbn siden</button></li>
+      <li><span><b>Kopiér nøglen</b> og indsæt den herunder. Den starter med <code>sk-ant-</code></span></li>
+    </ol>
+    <div class="input"><i data-ic="key"></i><input type="password" id="aiKey" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"></div>
+    <div class="aistatus" id="aiStatus"></div>
+    <div class="hint">Nøglen gemmes kun på din computer og sendes kun til Anthropic. En video koster typisk under 1 krone.</div>
+  </div>
+  <div id="aiOn" style="display:none">
+    <div class="aion"><span class="dot"></span>Claude AI er slået til<code id="aiMasked"></code></div>
+    <p class="hint" style="margin-top:10px">Claude bruges automatisk, hver gang du laver en reel. Lad hook-feltet være tomt, så skriver Claude selv en.</p>
+  </div>
+  <div class="mact" style="margin-top:18px">
+    <button class="btn ghost" id="aiRemove" style="margin-right:auto;display:none">Fjern nøgle</button>
+    <button class="btn" id="aiClose">Luk</button>
+    <button class="btn primary" id="aiSave"><i data-ic="check"></i>Gem og test</button>
+  </div>
+</div></div>
 <div class="dropov" id="dropov"><div><i data-ic="upload"></i><h2>Slip videoen her</h2><p>Så gør vi den klar til at blive en reel</p></div></div>
 
 <script>
@@ -544,6 +589,7 @@ const ICONS = {
   external:'<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
   terminal:'<polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>',
   alert:'<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
+  key:'<circle cx="7.5" cy="15.5" r="5.5"/><path d="M11.5 11.5L21 2"/><path d="M15.5 7.5l3 3"/><path d="M18.5 4.5l2 2"/>',
 };
 const ic = n => `<svg class="i" viewBox="0 0 24 24">${ICONS[n] || ""}</svg>`;
 const paintIcons = (root = document) => $$("i[data-ic]", root).forEach(el => { el.outerHTML = ic(el.dataset.ic); });
@@ -561,7 +607,12 @@ async function api(path, body) {
 const fileUrl = p => `/api/file?p=${encodeURIComponent(p)}&t=${TOKEN}`;
 
 /* ---------------------------------------------------------------- state */
-const DEF = { hook:"", reference:"", max_len:"60", count:1, style:"bold", accent:"", pacing:"normal", language:"",
+const MODE_HINT = {
+  auto: "vælger selv ud fra om der bliver talt",
+  speech: "klipper pauser og \"øh\" væk og laver undertekster",
+  montage: "biler, sport, rejser: de bedste øjeblikke klippet i takt med musikken",
+};
+const DEF = { mode:"auto", hook:"", reference:"", max_len:"60", count:1, style:"bold", accent:"", pacing:"normal", language:"",
               music:"", cta:"", no_cta:false, captions:true, zoom:true, progress:true, fillers:true, enhance:true };
 const S = { opts: { ...DEF }, video: "", isUrl: false, mode: "preview", seq: 0, timer: null, results: [], active: 0,
             uploading: false, tt: false, recent: [], lastJob: null };
@@ -603,6 +654,10 @@ function applyOpts() {
   cus.classList.toggle("on", !!o.accent && !known);
   if (o.accent && !known) { cus.style.background = o.accent; $("#customColor").value = o.accent; } else cus.style.background = "";
   $("#countVal").innerHTML = `${o.count}<small>${o.count === 1 ? "reel" : "reels"}</small>`;
+  $("#modeHint").textContent = MODE_HINT[o.mode] || MODE_HINT.auto;
+  $("#musicHint").textContent = o.mode === "montage"
+    ? "anbefalet · klippene lægges præcist i takt med musikken"
+    : "valgfri · skrues ned når der tales · uden tale klippes der i takt";
   $("#noCta").checked = !!o.no_cta;
   $("#cta").disabled = !!o.no_cta;
   $("#cta").placeholder = "Automatisk: " + (CTA_AUTO[o.language] || CTA_AUTO[""]);
@@ -611,6 +666,8 @@ function applyOpts() {
   $("#musicName").textContent = o.music ? o.music.split(/[\\/]/).pop() : "Ingen musik valgt";
   $("#clearMusic").style.display = o.music ? "" : "none";
   renderDemos(); renderPreviewStatic();
+  const fill = o.mode === "montage" ? "crop" : "blur";
+  if (S.video && !S.isUrl && S.fill && S.fill !== fill) setVideo(S.video);
 }
 
 function bindOpts() {
@@ -668,7 +725,7 @@ function renderPreviewStatic() {
   const st = STYLE[o.style];
   const cap = $("#pvCap");
   cap.style.fontSize = st.size + "px";
-  cap.style.display = o.captions ? "" : "none";
+  cap.style.display = o.captions && o.mode !== "montage" ? "" : "none";
   chunkShown = -1;
 }
 function previewTick(now) {
@@ -717,7 +774,8 @@ function setVideo(path, isUrl = false) {
   $("#vname").title = path;
   $("#vmeta").innerHTML = `<span class="ok">${ic("check")}</span> Klar til at blive en reel`;
   const th = $("#vthumb"); th.style.backgroundImage = ""; th.innerHTML = ic("film");
-  const url = `/api/thumb?p=${encodeURIComponent(path)}&t=${TOKEN}`;
+  S.fill = S.opts.mode === "montage" ? "crop" : "blur";     // montage = full-screen crop, like the real reel
+  const url = `/api/thumb?p=${encodeURIComponent(path)}&fill=${S.fill}&t=${TOKEN}`;
   const img = new Image();
   img.onload = () => {
     th.style.backgroundImage = `url("${url}")`; th.innerHTML = "";
@@ -878,6 +936,7 @@ function showResult(i) {
   if (res.duration) meta.push(String(res.duration.toFixed ? res.duration.toFixed(1) : res.duration).replace(".", ",") + " sek.");
   meta.push("1080 × 1920");
   if (res.language) meta.push(LANG[res.language] || res.language.toUpperCase());
+  if (res.mode === "montage") meta.push("Montage i takt med musikken");
   if (res.decided_by) meta.push(res.decided_by === "Claude" ? "Klippet af Claude AI" : "Klippet automatisk");
   $("#rMeta").innerHTML = meta.map(m => `<span>${m}</span>`).join("");
   $("#rPost").textContent = res.post || "(ingen opslagstekst)";
@@ -913,8 +972,51 @@ function showError(title, text, isLog = false) {
   $("#modal").classList.add("open");
 }
 
+/* ---------------------------------------------------------------- Claude AI key */
+function setAI(on, masked) {
+  S.ai = on;
+  $("#aiChip").classList.toggle("on", on);
+  $("#aiText").textContent = on ? "Claude AI · slået til" : "Slå Claude AI til";
+  $("#aiOff").style.display = on ? "none" : "";
+  $("#aiOn").style.display = on ? "" : "none";
+  $("#aiSave").style.display = on ? "none" : "";
+  $("#aiRemove").style.display = on ? "" : "none";
+  $("#aiMasked").textContent = masked || "";
+  $("#hook").placeholder = on ? "Valgfri – lad den være tom, så skriver Claude en" : "Fx: Jeg droppede telefonen i 30 dage";
+}
+function aiStatus(kind, msg) {
+  const el = $("#aiStatus");
+  el.className = "aistatus " + kind;
+  el.innerHTML = kind === "busy" ? `<span class="spin"></span><span></span>` : (kind === "ok" ? ic("checkc") : ic("alert")) + "<span></span>";
+  el.lastChild.textContent = msg;
+}
+async function saveKey() {
+  const key = $("#aiKey").value.trim();
+  if (!key) { aiStatus("bad", "Indsæt din nøgle først."); return; }
+  $("#aiSave").disabled = true;
+  aiStatus("busy", "Tester forbindelsen til Claude… (5-20 sekunder)");
+  let r = {};
+  try { r = await api("/api/apikey", { key }); } catch (e) { r = { ok: false, message: "Kunne ikke kontakte programmet." }; }
+  $("#aiSave").disabled = false;
+  if (r.ok) {
+    aiStatus("ok", r.message || "Claude AI virker!");
+    $("#aiKey").value = "";
+    setTimeout(() => { setAI(true, r.ai_key); toast("Claude AI er slået til"); }, 1600);
+  } else {
+    aiStatus("bad", r.message || r.error || "Det virkede ikke.");
+    if (r.saved) setAI(true, r.ai_key);
+  }
+}
+function openAI() { $("#aiStatus").className = "aistatus"; $("#aiStatus").textContent = ""; $("#aiModal").classList.add("open"); if (!S.ai) setTimeout(() => $("#aiKey").focus(), 50); }
+
 /* ---------------------------------------------------------------- wiring */
 function wire() {
+  $("#aiChip").onclick = openAI;
+  $("#aiClose").onclick = () => $("#aiModal").classList.remove("open");
+  $("#aiSave").onclick = saveKey;
+  $("#aiKey").addEventListener("keydown", e => { if (e.key === "Enter") saveKey(); });
+  $("#openKeys").onclick = () => api("/api/keys-page", {});
+  $("#aiRemove").onclick = async () => { await api("/api/apikey/remove", {}); setAI(false, ""); toast("Nøglen er fjernet"); };
   $("#goBtn").onclick = start;
   $("#pickVideo").onclick = pickVideo;
   $("#changeVideo").onclick = pickVideo;
@@ -953,7 +1055,7 @@ function wire() {
     const f = e.dataTransfer.files[0]; if (f) { setMode("preview"); uploadFile(f); }
   });
 
-  window.addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") start(); if (e.key === "Escape") { closeDrawer(); $("#modal").classList.remove("open"); } });
+  window.addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") start(); if (e.key === "Escape") { closeDrawer(); $("#modal").classList.remove("open"); $("#aiModal").classList.remove("open"); } });
   window.addEventListener("beforeunload", e => { if (S.mode === "running") { e.preventDefault(); e.returnValue = ""; } });
   window.addEventListener("pagehide", () => navigator.sendBeacon(`/api/bye?t=${TOKEN}`));
   window.addEventListener("resize", fitStage);
@@ -970,7 +1072,7 @@ async function init() {
   S.opts.max_len = String(S.opts.max_len || "60");
   S.opts.hook = "";
   applyOpts();
-  if (st.ai) { $("#aiChip").classList.add("on"); $("#aiText").textContent = "Claude AI · slået til"; $("#aiChip").title = "Claude vælger de bedste øjeblikke og skriver hook og hashtags"; }
+  setAI(!!st.ai, st.ai_key);
   if (st.initial) { /^https?:\/\//i.test(st.initial) ? ($("#link").value = st.initial, setVideo(st.initial, true)) : setVideo(st.initial); }
   S.recent = st.recent || []; renderRecent();
   if (st.job && st.job.running) { setMode("running"); poll(); }

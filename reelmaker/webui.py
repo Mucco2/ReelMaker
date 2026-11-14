@@ -80,7 +80,7 @@ def result_info(folder: str | Path) -> dict:
     return {
         "dir": str(f), "name": f.name, "title": title, "post": core.read_post_text(f),
         "duration": plan.get("final_duration"), "hook": plan.get("hook"),
-        "decided_by": plan.get("decided_by"), "language": plan.get("language"),
+        "decided_by": plan.get("decided_by"), "language": plan.get("language"), "mode": plan.get("mode"),
         "video": file_url(f / "reel.mp4"), "cover": file_url(f / "cover.jpg") if (f / "cover.jpg").exists() else "",
         "time": (f / "reel.mp4").stat().st_mtime if (f / "reel.mp4").exists() else 0,
     }
@@ -229,11 +229,11 @@ def pick_file(kind: str) -> str:
         return ""
 
 
-def make_thumb(src: Path) -> Path | None:
-    """A 9:16 preview frame of the chosen video (blurred fill for landscape, like the real reel)."""
+def make_thumb(src: Path, fill: str = "blur") -> Path | None:
+    """A 9:16 preview frame of the chosen video: blurred fill (talking videos) or full crop (montage)."""
     THUMBS.mkdir(parents=True, exist_ok=True)
     st = src.stat()
-    key = hashlib.sha1(f"{src.resolve()}|{st.st_size}|{int(st.st_mtime)}".encode("utf-8", "replace")).hexdigest()[:16]
+    key = hashlib.sha1(f"{src.resolve()}|{st.st_size}|{int(st.st_mtime)}|{fill}".encode("utf-8", "replace")).hexdigest()[:16]
     out = THUMBS / f"{key}.jpg"
     if out.exists():
         return out
@@ -241,7 +241,9 @@ def make_thumb(src: Path) -> Path | None:
     if not info.has_video:
         return None
     t = min(1.5, max(0.0, info.duration / 3))
-    if info.is_vertical:
+    if fill == "crop" and not info.is_vertical:
+        t = min(max(5.0, info.duration * 0.2), max(0.0, info.duration - 1))   # past the intro, like the montage
+    if info.is_vertical or fill == "crop":
         vf = "scale=540:960:force_original_aspect_ratio=increase,crop=540:960"
     else:
         vf = ("split=2[bg][fg];[bg]scale=135:240:force_original_aspect_ratio=increase,crop=135:240,"
@@ -255,6 +257,36 @@ def make_thumb(src: Path) -> Path | None:
 def ai_enabled() -> bool:
     from .director import _have_credentials
     return _have_credentials()
+
+
+KEYS_URL = "https://platform.claude.com/settings/keys"
+
+
+def masked_key() -> str:
+    k = os.environ.get("ANTHROPIC_API_KEY", "")
+    return f"sk-ant-…{k[-4:]}" if len(k) > 12 else ""
+
+
+def save_api_key(key: str | None) -> None:
+    """Store the key as a Windows user environment variable (same as `setx`), without putting it on a
+    command line, and use it right away in this window."""
+    if os.name == "nt":
+        import ctypes
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as k:
+            if key:
+                winreg.SetValueEx(k, "ANTHROPIC_API_KEY", 0, winreg.REG_SZ, key)
+            else:
+                try:
+                    winreg.DeleteValue(k, "ANTHROPIC_API_KEY")
+                except FileNotFoundError:
+                    pass
+        res = ctypes.c_ulong()   # tell Windows so programs started later see the change
+        ctypes.windll.user32.SendMessageTimeoutW(0xFFFF, 0x001A, 0, "Environment", 0x0002, 2000, ctypes.byref(res))
+    if key:
+        os.environ["ANTHROPIC_API_KEY"] = key
+    else:
+        os.environ.pop("ANTHROPIC_API_KEY", None)
 
 
 # --------------------------------------------------------------------------- HTTP
@@ -321,6 +353,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if url.path == "/api/state":
                 return self._json({
                     "settings": core.load_settings(), "initial": STATE["initial"], "ai": ai_enabled(),
+                    "ai_key": masked_key(),
                     "job": JOB.snapshot() if JOB else None, "recent": recent_outputs(),
                 })
             if url.path == "/api/poll":
@@ -332,7 +365,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 p = Path(qs.get("p", [""])[0])
                 if not p.is_file():
                     return self._send(404, b"", "text/plain")
-                thumb = make_thumb(p)
+                thumb = make_thumb(p, "crop" if qs.get("fill", [""])[0] == "crop" else "blur")
                 if not thumb:
                     return self._send(404, b"", "text/plain")
                 return self._send(200, thumb.read_bytes(), "image/jpeg")
@@ -376,6 +409,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     os.startfile(str(p))  # type: ignore[attr-defined]
                     return self._json({"ok": True})
                 return self._json({"error": "Ukendt sti"}, 400)
+            if url.path == "/api/apikey":
+                key = re.sub(r"\s+", "", data.get("key") or "")
+                if not key.startswith("sk-ant-") or len(key) < 30:
+                    return self._json({"ok": False, "message": "Det ligner ikke en API-nøgle. Den skal starte med sk-ant-"})
+                from .director import test_claude
+                works, valid, message = test_claude(key)
+                if valid:
+                    save_api_key(key)
+                _log(f"api key test: works={works} valid={valid}")
+                return self._json({"ok": works, "saved": valid, "message": message, "ai_key": masked_key()})
+            if url.path == "/api/apikey/remove":
+                save_api_key(None)
+                return self._json({"ok": True})
+            if url.path == "/api/keys-page":
+                os.startfile(KEYS_URL)  # type: ignore[attr-defined]   # the user's normal browser (logged in)
+                return self._json({"ok": True})
             if url.path == "/api/bye":
                 STATE["bye_at"] = time.time()
                 return self._json({"ok": True})
@@ -541,6 +590,8 @@ def _watch_browser(proc: subprocess.Popen) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
+    from .utils import load_saved_api_key
+    load_saved_api_key()
     STATE["initial"] = argv[0].strip().strip('"') if argv and argv[0].strip() else ""
     if "--no-window" in argv:
         STATE["initial"] = ""

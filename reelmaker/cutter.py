@@ -26,6 +26,8 @@ class Piece:
     frames: int
     zoom: float = 1.0
     cx: float | None = None
+    punch: bool = False          # montage: quick zoom-in "hit" at the start of the clip (lands on the beat)
+    flash: bool = False          # montage: short white flash at the start of the clip
 
     @property
     def duration(self) -> float:
@@ -62,20 +64,28 @@ def choose_mode(info: MediaInfo, plan: EditPlan, settings: Settings, finder) -> 
         return mode
     if info.is_vertical:
         return "fit"
-    if finder is None or not finder.ok:
-        return "blur"
+    montage = plan.mode == "montage"
+    if finder is None:
+        return "crop" if montage else "blur"
+    if not finder.ok:                   # no face model, but we can still follow the action in a montage
+        return "smart" if montage else "blur"
     segs = plan.segments
     step = max(1, len(segs) // 10)
     probes = segs[::step][:10]
     hits = sum(1 for s, e in probes if finder.center_x(s, e, samples=1) is not None)
-    mode = "face" if probes and hits / len(probes) >= 0.5 else "blur"
-    log(AGENT, f"Faces in {hits}/{len(probes)} test frames -> {'face-tracking crop' if mode == 'face' else 'blurred background fill'}")
+    if probes and hits / len(probes) >= 0.5:
+        mode = "face"
+    else:
+        mode = "smart" if montage else "blur"
+    label = {"face": "face-tracking crop", "smart": "full-screen crop that follows the action",
+             "blur": "blurred background fill"}[mode]
+    log(AGENT, f"Faces in {hits}/{len(probes)} test frames -> {label}")
     return mode
 
 
 def reframe_filter(mode: str, info: MediaInfo, cx: float | None, zoom: float) -> str:
     W, H = WIDTH, HEIGHT
-    if mode in ("crop", "face"):
+    if mode in ("crop", "face", "smart"):
         sw, sh = info.width, info.height
         ar = W / H
         if sw / sh > ar:
@@ -108,6 +118,11 @@ def _video_chain(mode: str, info: MediaInfo, piece: Piece, settings: Settings) -
     # start_time=0 pins the frame grid to the cut point, so every piece has exactly `frames` frames
     # that line up with its audio (otherwise each cut can add a frame of lag).
     chain = f"fps=fps={FPS}:start_time=0," + reframe_filter(mode, info, piece.cx, piece.zoom)
+    if piece.punch:   # 12% zoom that eases out over ~7 frames
+        chain += (f",zoompan=z='1+0.12*pow(max(0\\,1-on/7)\\,2)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+                  f":d=1:s={WIDTH}x{HEIGHT}:fps={FPS}")
+    if piece.flash:
+        chain += ",eq=brightness='if(lt(t\\,0.1)\\,0.3*(1-t/0.1)\\,0)':eval=frame"
     if settings.enhance:
         chain += ",eq=contrast=1.05:saturation=1.12,unsharp=5:5:0.45:5:5:0.0"
     chain += ",setsar=1,format=yuv420p,tpad=stop_mode=clone:stop_duration=1"
@@ -142,7 +157,7 @@ def _render_piece(idx: int, piece: Piece, info: MediaInfo, mode: str, settings: 
 def cut(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tuple[Path, Timeline]:
     sw = Stopwatch()
     finder = None
-    if settings.reframe in ("auto", "face") and not info.is_vertical:
+    if settings.reframe in ("auto", "face", "smart") and not info.is_vertical:
         try:
             from .faces import FaceFinder
             finder = FaceFinder(info.path)
@@ -158,9 +173,12 @@ def cut(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tupl
     for k, (s, e) in enumerate(plan.segments):
         s = round(s * FPS) / FPS
         frames = max(1, round((e - s) * FPS))
+        montage = plan.mode == "montage"
         jump = prev_end is not None and abs(s - prev_end) < 8.0
-        zoom = 1.12 if (settings.zoom_cuts and jump and len(pieces) % 2 == 1) else 1.0
-        pieces.append(Piece(src_start=s, src_end=s + frames / FPS, out_start=out_t, frames=frames, zoom=zoom))
+        zoom = 1.12 if (settings.zoom_cuts and jump and not montage and len(pieces) % 2 == 1) else 1.0
+        pieces.append(Piece(src_start=s, src_end=s + frames / FPS, out_start=out_t, frames=frames, zoom=zoom,
+                            punch=montage and settings.zoom_cuts,
+                            flash=montage and settings.zoom_cuts and k % 4 == 0))
         out_t += frames / FPS
         prev_end = s + frames / FPS
 
@@ -174,6 +192,11 @@ def cut(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tupl
             if prev is not None and abs(x - prev) < 0.06:
                 x = prev  # ignore tiny jitter so the frame stays steady
             p.cx = prev = x
+    if mode == "smart" and finder is not None:
+        crop_frac = min(1.0, (info.height * WIDTH / HEIGHT) / max(1, info.width))
+        for p in pieces:
+            x = finder.center_x(p.src_start, p.src_end, samples=2) if finder.ok else None
+            p.cx = x if x is not None else finder.content_x(p.src_start, p.src_end, crop_frac / p.zoom)
     if finder is not None:
         finder.close()
 

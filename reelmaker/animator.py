@@ -60,6 +60,8 @@ def build_chunks(transcript: dict, plan: EditPlan, tl: Timeline, settings: Setti
     max_words = 3 if style["upper"] else 4
     max_chars = 16 if style["upper"] else 22
     mapped: list[tuple[CapWord, str]] = []
+    if plan.mode == "montage":      # the few stray words would land on unrelated clips
+        return []
     for w in all_words(transcript):
         if settings.remove_fillers and is_filler(w, settings.speech_language):
             continue

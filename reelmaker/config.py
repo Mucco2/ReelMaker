@@ -62,6 +62,10 @@ CAPTION_STYLES = {
 
 @dataclass
 class Settings:
+    # what kind of edit
+    mode: str = "auto"                      # auto | speech | montage (montage = no talking, cut to the music)
+    text_language: str | None = None        # language for hook/post text when the video has no speech
+
     # length & pacing
     max_duration: float | None = None      # None -> platform limit / auto
     target_duration: float = 60.0           # what we aim for when picking highlights

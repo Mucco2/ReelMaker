@@ -54,6 +54,9 @@ class EditPlan:
     hashtags: list[str] = field(default_factory=list)
     emphasis: set[str] = field(default_factory=set)
     decided_by: str = "rules"
+    mode: str = "speech"                          # speech | montage
+    music_start: float = 0.0                      # where in the song the reel starts (montage, beat-aligned)
+    music_loop: float = 0.0                       # montage: whole-beat length of song to loop if it's too short
 
     @property
     def duration(self) -> float:
@@ -260,18 +263,8 @@ def _have_credentials() -> bool:
 _FALLBACK_MODELS = {"claude-opus-5-5", "claude-opus-5", "claude-fable-5-2", "claude-fable-5-1", "claude-sonnet-5-5"}
 
 
-def ai_plan(segs: list[dict], src_duration: float, max_len: float, settings: Settings,
-            count: int = 1) -> list[dict] | None:
-    if settings.ai == "off":
-        return None
-    if settings.ai == "auto" and not _have_credentials():
-        return None
-    try:
-        import anthropic
-    except ImportError:
-        warn(AGENT, "anthropic package missing - using built-in rules")
-        return None
-
+def _request_kwargs(segs: list[dict], src_duration: float, max_len: float, settings: Settings,
+                    count: int) -> dict:
     lines = [f"[{i}] {s['start']:.1f}-{s['end']:.1f}s: {s['text']}" for i, s in enumerate(segs)]
     target = min(settings.target_duration, max_len)
     notes = ("\nStyle notes from the reference video:\n- " + "\n- ".join(settings.style_notes)) if settings.style_notes else ""
@@ -289,7 +282,63 @@ def ai_plan(segs: list[dict], src_duration: float, max_len: float, settings: Set
     if settings.ai_model in _FALLBACK_MODELS:
         kwargs["betas"] = ["server-side-fallback-2026-07-01"]
         kwargs["fallbacks"] = "default"
+    return kwargs
 
+
+def test_claude(api_key: str, settings: Settings | None = None) -> tuple[bool, bool, str]:
+    """Send the exact same kind of request a real reel uses, on a tiny transcript.
+
+    Returns (works, key_is_valid, message in Danish)."""
+    import anthropic
+    settings = settings or Settings()
+    segs = [{"start": 0.0, "end": 3.0, "text": "Vidste du at de fleste mennesker sover for lidt?"},
+            {"start": 3.4, "end": 7.0, "text": "Her er tre nemme tricks til bedre søvn i aften."}]
+    kwargs = _request_kwargs(segs, 7.0, 60, settings, 1)
+    kwargs["max_tokens"] = 4000
+    kwargs["output_config"] = {**kwargs["output_config"], "effort": "low"}
+    try:
+        client = anthropic.Anthropic(api_key=api_key, timeout=90, max_retries=1)
+        resp = client.beta.messages.create(**kwargs)
+    except anthropic.AuthenticationError:
+        return False, False, "Nøglen virker ikke. Tjek at du har kopieret hele nøglen (den starter med sk-ant-)."
+    except anthropic.PermissionDeniedError:
+        return False, False, "Nøglen har ikke adgang til Claude-modellen. Lav en ny nøgle på platform.claude.com."
+    except anthropic.RateLimitError:
+        return True, True, "Nøglen virker (Claude er travl lige nu, men det går fint til dine videoer)."
+    except anthropic.APIStatusError as e:
+        msg = str(getattr(e, "message", "") or e)
+        if "credit" in msg.lower() or "billing" in msg.lower():
+            return False, True, ("Nøglen er rigtig, men din konto har ingen kredit. Tilføj betaling under "
+                                 "Billing på platform.claude.com og prøv igen.")
+        return False, True, f"Claude svarede med fejl {e.status_code}: {msg[:300]}"
+    except anthropic.APIConnectionError:
+        return False, False, "Kunne ikke forbinde til Claude. Tjek din internetforbindelse."
+    except Exception as e:
+        return False, False, f"Uventet fejl: {type(e).__name__}: {str(e)[:200]}"
+    if resp.stop_reason == "refusal":
+        return True, True, "Nøglen virker."
+    text = next((b.text for b in resp.content if b.type == "text"), "")
+    try:
+        reels = json.loads(text).get("reels") or []
+        hook = (reels[0].get("hook") or "").strip() if reels else ""
+    except (json.JSONDecodeError, AttributeError, IndexError):
+        return True, True, "Nøglen virker, men svaret var uventet - sig det til udvikleren."
+    return True, True, "Claude AI virker!" + (f' Test-hook: "{hook}"' if hook else "")
+
+
+def ai_plan(segs: list[dict], src_duration: float, max_len: float, settings: Settings,
+            count: int = 1) -> list[dict] | None:
+    if settings.ai == "off":
+        return None
+    if settings.ai == "auto" and not _have_credentials():
+        return None
+    try:
+        import anthropic
+    except ImportError:
+        warn(AGENT, "anthropic package missing - using built-in rules")
+        return None
+
+    kwargs = _request_kwargs(segs, src_duration, max_len, settings, count)
     log(AGENT, f"Asking Claude ({settings.ai_model}) to pick the best moments...")
     try:
         client = anthropic.Anthropic()

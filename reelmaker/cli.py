@@ -32,13 +32,16 @@ def _make_parser() -> argparse.ArgumentParser:
 
     m = sub.add_parser("make", help="edit a video into a reel (default)")
     m.add_argument("input", help="video file path or link (YouTube, TikTok, Instagram, ...)")
+    m.add_argument("--mode", choices=["auto", "speech", "montage"],
+                   help="auto (default) | speech = edit around what is said | montage = best moments cut to the music")
+    m.add_argument("--text-language", help="language for hook/post text when the video has no speech, e.g. da")
     m.add_argument("--max-duration", type=float, help="longest the reel may be, seconds (default 60)")
     m.add_argument("--count", type=int, choices=range(1, 6), metavar="N",
                    help="make N different reels from the best moments (1-5, default 1)")
     m.add_argument("--platform", choices=sorted(PLATFORM_LIMITS), help="enforce a platform's length limit")
     m.add_argument("--pacing", choices=sorted(PACING), help="how hard to cut pauses (default normal)")
     m.add_argument("--keep-fillers", action="store_true", help="keep um/uh")
-    m.add_argument("--reframe", choices=["auto", "face", "crop", "blur", "fit"], help="how to make it 9:16")
+    m.add_argument("--reframe", choices=["auto", "face", "smart", "crop", "blur", "fit"], help="how to make it 9:16")
     m.add_argument("--no-zoom", dest="zoom_cuts", action="store_false", default=None, help="no zoom punch-ins on cuts")
     m.add_argument("--no-enhance", dest="enhance", action="store_false", default=None, help="no colour/sharpness boost")
     m.add_argument("--no-captions", dest="captions", action="store_false", default=None)
@@ -79,6 +82,8 @@ def _settings_from(args: argparse.Namespace) -> tuple[Settings, set[str]]:
     put("max_duration", args.max_duration)
     if args.max_duration:
         s.target_duration = args.max_duration
+    put("mode", args.mode)
+    put("text_language", args.text_language)
     put("count", args.count)
     put("platform", args.platform)
     put("pacing", args.pacing)
@@ -139,6 +144,8 @@ def doctor() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .utils import load_saved_api_key
+    load_saved_api_key()
     argv = list(sys.argv[1:] if argv is None else argv)
     # `reelmaker video.mp4 ...` and `reelmaker --hook X video.mp4` both mean `make`
     if argv and argv[0] not in COMMANDS and argv[0] not in ("-h", "--help"):

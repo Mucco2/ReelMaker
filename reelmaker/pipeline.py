@@ -45,11 +45,23 @@ def make_reel(src: str, settings: Settings, ref: str | None = None, style_file: 
     # 3. Transcriber
     transcript = transcribe(video, work, settings.whisper_model, settings.language, info.has_audio,
                             duration=info.duration)
-    settings.speech_language = settings.language or transcript.get("language")
-    settings.resolve_cta(settings.speech_language)
+    speech_secs = sum(w["end"] - w["start"] for s in transcript.get("segments", []) for w in s["words"])
+    mode = settings.mode
+    if mode == "auto":
+        # (almost) nothing said -> a music montage of the best moments instead of a talking edit
+        mode = "montage" if speech_secs < max(4.0, 0.06 * min(info.duration, 600)) else "speech"
+    settings.speech_language = (settings.language or transcript.get("language")) if mode == "speech" else None
+    if mode == "montage" and not settings.text_language:
+        settings.text_language = settings.language or "en"
+    settings.resolve_cta(settings.speech_language or settings.text_language)
 
     # 4. Director
-    plans = [p for p in plan_edits(transcript, info.duration, settings, settings.count) if p.segments]
+    if mode == "montage":
+        from .montage import plan_montage
+        log(AGENT, f"Heard only {speech_secs:.1f}s of speech -> montage mode (best moments, cut to the beat)")
+        plans = [p for p in plan_montage(info, settings, work, settings.count) if p.segments]
+    else:
+        plans = [p for p in plan_edits(transcript, info.duration, settings, settings.count) if p.segments]
     if not plans:
         raise PipelineError("Nothing left to keep after editing - try --pacing chill or a longer --max-duration.")
 
@@ -78,7 +90,8 @@ def make_reel(src: str, settings: Settings, ref: str | None = None, style_file: 
         (out_dir / "edit_plan.json").write_text(json.dumps({
             "input": str(video), "settings": settings.to_dict(), "decided_by": plan.decided_by,
             "hook": plan.hook, "kept_ranges": plan.segments, "final_duration": round(timeline.duration, 3),
-            "overlay": overlay.kind, "language": transcript.get("language"),
+            "overlay": overlay.kind, "language": settings.speech_language or settings.text_language,
+            "mode": plan.mode, "music_start": plan.music_start,
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         finals.append(final)
         print(f"RESULT_DIR={out_dir.resolve()}", flush=True)
