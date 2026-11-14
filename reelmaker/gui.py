@@ -47,7 +47,7 @@ VIDEO_TYPES = [("Video", "*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.wmv *.flv *.mts
 AUDIO_TYPES = [("Lyd", "*.mp3 *.wav *.m4a *.aac *.ogg *.flac"), ("Alle filer", "*.*")]
 
 DEFAULTS = {
-    "mode": "auto",
+    "mode": "auto", "fx": "insane",
     "hook": "", "reference": "", "max_len": "60", "count": 1, "style": "bold", "accent": "",
     "pacing": "normal", "language": "", "music": "", "cta": "", "no_cta": False,
     "captions": True, "zoom": True, "progress": True, "fillers": True, "enhance": True,
@@ -73,6 +73,8 @@ def build_command(video: str, opts: dict, python: str | None = None) -> list[str
     cmd = [python or python_for_subprocess(), "-m", "reelmaker", "make", video.strip().strip('"')]
     if o.get("mode") in ("speech", "montage"):
         cmd += ["--mode", o["mode"]]
+    if o.get("fx") in ("insane", "classic"):
+        cmd += ["--fx", o["fx"]]
     cmd += ["--text-language", "da"]          # Danish hook/post text for videos without speech
     if o["hook"].strip():
         cmd += ["--hook", o["hook"].strip()]

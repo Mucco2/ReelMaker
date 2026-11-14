@@ -36,8 +36,16 @@ word-by-word captions, a hook title, zoom cuts and clean audio.
 **To slags klip (Klippestil):**
 - **Tale:** til videoer hvor nogen snakker. Pauser og "øh" bliver klippet væk, og der kommer animerede undertekster.
 - **Montage til musik:** til videoer uden tale, fx biler, sport, rejser og gaming. Programmet finder de vildeste
-  øjeblikke ud fra lyd og bevægelse og klipper dem præcist i takt med din musik. Hvert klip får et lille zoom-"slag",
-  og der kommer et flash på beatet. Det vildeste klip kommer først som hook. Vælg musik for det bedste resultat.
+  øjeblikke ud fra lyd og bevægelse og klipper dem præcist i takt med din musik. Vælg musik for det bedste resultat.
+  Med **Effekter: Vilde** (standard) bliver det en rigtig "edit":
+  - Sangen starter, så videoen åbner med slowmotion og titlen (ét ord pr. beat), og så kommer droppet efter 2-4 sek.
+  - Før droppet: hurtigere og hurtigere klip med flash og glitch og en "riser"-lyd. På droppet: flash, rystelse,
+    farve-split og et dybt BANG.
+  - Bagefter: klip der skifter mønster hver takt, speed-ramps (hurtigt - slowmotion - hurtigt), nærbilleder
+    (fx speedometeret), panorering, skæve vinkler, zoom-blur og whip-pan overgange med whoosh-lyd, og zoom på
+    hvert bas-slag. Farverne får et filmisk look.
+  - Med Claude-nøgle kigger Claude på billederne, vælger klippene og siger hvor der skal zoomes ind.
+  - **Effekter: Rolige** giver de gamle, enkle klip på beatet.
 - **Automatisk** (standard) vælger selv ud fra, om der bliver talt.
 
 Programmet forstår dansk tale, fjerner "øh" og pauser og skriver "FØLG FOR MERE" til sidst.
@@ -80,7 +88,8 @@ Første gang hentes talemodellen (1,6 GB), så den første video tager et par mi
 | Fetcher | yt-dlp | Downloads the video when you give it a link |
 | Reference Analyst | yt-dlp + FFmpeg | Studies a reel you like: its length, how often the shot changes, how much silence |
 | Transcriber | OpenAI Whisper (faster-whisper) | Writes down every word with exact timing |
-| Director | built-in rules, or Claude AI | Picks the best part, cuts pauses and "um"/"uh", writes the hook and hashtags. For videos without speech it switches to **montage mode**: it scans loudness, motion and shot changes, finds the music's beat, and picks the most exciting moments, cut exactly on the beat. With a key, Claude looks at frames to choose them |
+| Director | built-in rules, or Claude AI | Picks the best part, cuts pauses and "um"/"uh", writes the hook and hashtags. For videos without speech it switches to **montage mode**: it scans loudness, motion and shot changes, finds the music's beat, and picks the most exciting moments, cut exactly on the beat. With a key, Claude looks at frames to choose them. The **insane edit** (default) also reads the song's structure (drops, bass hits) and plans slow-motion intro, build-up, impact and hype section shot by shot |
+| FX engine | numpy + OpenCV + FFmpeg | Renders the insane edit frame by frame: slow motion and speed ramps with motion blur, a virtual camera (close-ups, pans, push-ins, dutch tilt), zoom pulses and shake on the bass, zoom/whip/flash/glitch transitions, colour grade, letterbox, and synthetic whoosh/impact/riser sound effects |
 | Cutter | FFmpeg | Cuts the video and turns it into 9:16: face-tracking crop for talking heads, blurred background for everything else. Adds zoom punch-ins on jump cuts and a light colour/sharpness boost |
 | Animator | HyperFrames | Animated captions with the spoken word highlighted, a pop-in hook title, a progress bar and a "follow" call-to-action |
 | Finisher | FFmpeg | Cleans the voice (rumble cut, light denoise, compression), sets loudness to -14 LUFS like the apps use, then exports a 1080x1920 H.264 MP4 |
@@ -106,6 +115,7 @@ you'll need to type the hook text yourself.
 | Option | What it does |
 |---|---|
 | `--mode montage` | `auto` (default), `speech` (edit around what's said) or `montage` (best moments cut to the music, for videos without talking) |
+| `--fx classic` | Montage style: `insane` (default: speed ramps, slow motion, close-ups, shake, flashes, sound effects) or `classic` (plain cuts on the beat) |
 | `--text-language da` | Language for the hook and post text when the video has no speech |
 | `--max-duration 45` | Longest the reel may be, in seconds |
 | `--count 3` | Make 3 different reels from the best moments of one long video |

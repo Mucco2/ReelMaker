@@ -441,6 +441,10 @@ select option{background:#15151f}
             <label class="sw custom" title="Vælg din egen farve"><input type="color" id="customColor" value="#3AB4FF"></label>
           </div>
         </div>
+        <div class="field">
+          <div class="label">Effekter <em>til montage med musik</em></div>
+          <div class="seg" data-seg="fx"><button data-val="insane">Vilde</button><button data-val="classic">Rolige</button></div>
+        </div>
         <div class="toggles">
           <label class="tg"><input type="checkbox" data-opt="captions"><span class="sw-t"></span><span><b>Undertekster</b><small>Animerede ord-for-ord tekster</small></span></label>
           <label class="tg"><input type="checkbox" data-opt="fillers"><span class="sw-t"></span><span><b>Fjern "øh" og pauser</b><small>Klipper fyldord og stilhed væk</small></span></label>
@@ -612,7 +616,7 @@ const MODE_HINT = {
   speech: "klipper pauser og \"øh\" væk og laver undertekster",
   montage: "biler, sport, rejser: de bedste øjeblikke klippet i takt med musikken",
 };
-const DEF = { mode:"auto", hook:"", reference:"", max_len:"60", count:1, style:"bold", accent:"", pacing:"normal", language:"",
+const DEF = { mode:"auto", fx:"insane", hook:"", reference:"", max_len:"60", count:1, style:"bold", accent:"", pacing:"normal", language:"",
               music:"", cta:"", no_cta:false, captions:true, zoom:true, progress:true, fillers:true, enhance:true };
 const S = { opts: { ...DEF }, video: "", isUrl: false, mode: "preview", seq: 0, timer: null, results: [], active: 0,
             uploading: false, tt: false, recent: [], lastJob: null };

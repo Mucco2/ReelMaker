@@ -128,6 +128,14 @@ _HTML = """<!doctype html>
                border-radius: 22px; font-family: 'Montserrat', 'Arial Black', sans-serif; font-weight: 900;
                font-size: __HOOKSIZE__px; line-height: 1.12; box-shadow: 0 14px 40px rgba(0,0,0,0.45);
                transform: rotate(-2deg); }
+  #hook.big span { background: none; box-shadow: none; padding: 0; border-radius: 0; transform: none;
+                   font-size: inherit; color: inherit; }
+  #hook.big #hooktext { display: block; color: #FFFFFF; font-family: 'Montserrat', 'Arial Black', sans-serif;
+                        font-weight: 900; font-style: italic; font-size: __HOOKBIG__px; line-height: 1.04;
+                        letter-spacing: -1px; -webkit-text-stroke: 12px #000; paint-order: stroke fill;
+                        text-shadow: 0 0 34px rgba(0,0,0,0.65), 0 8px 0 rgba(0,0,0,0.5); }
+  #hook.big .hw { display: inline-block; }
+  #hook.big .hw.last { color: __ACCENT__; }
   #cta { position: absolute; left: 0; right: 0; top: __CTAY__px; text-align: center; opacity: 0; visibility: hidden; }
   #cta span { display: inline-block; background: __ACCENT__; color: #111111; padding: 16px 36px; border-radius: 999px;
               font-family: 'Montserrat', 'Arial Black', sans-serif; font-weight: 900; font-size: 58px;
@@ -158,7 +166,23 @@ _HTML = """<!doctype html>
     document.getElementById("bar").remove();
   }
 
-  if (DATA.hook) {
+  if (DATA.hook && DATA.hook.big) {
+    document.getElementById("hook").classList.add("big");
+    const ht = document.getElementById("hooktext");
+    const words = DATA.hook.text.split(/\\s+/);
+    tl.set("#hook", { autoAlpha: 1 }, DATA.hook.s);
+    words.forEach((w, i) => {
+      const sp = document.createElement("span");
+      sp.className = "hw" + (i === words.length - 1 && words.length > 1 ? " last" : "");
+      sp.textContent = w;
+      ht.appendChild(sp);
+      ht.appendChild(document.createTextNode(" "));
+      const t = (DATA.hook.times && DATA.hook.times[i] !== undefined) ? DATA.hook.times[i] : DATA.hook.s;
+      tl.fromTo(sp, { autoAlpha: 0, scale: 2.4, y: -24, rotation: i % 2 ? 4 : -4 },
+                { autoAlpha: 1, scale: 1, y: 0, rotation: 0, duration: 0.16, ease: "power3.out" }, t);
+    });
+    tl.to("#hook", { scale: 1.7, autoAlpha: 0, duration: 0.14, ease: "power2.in" }, Math.max(0, DATA.hook.e - 0.04));
+  } else if (DATA.hook) {
     document.getElementById("hooktext").textContent = DATA.hook.text;
     tl.fromTo("#hook", { autoAlpha: 0, scale: 0.4, y: -40 },
               { autoAlpha: 1, scale: 1, y: 0, duration: 0.45, ease: "back.out(2.4)" }, DATA.hook.s);
@@ -236,6 +260,17 @@ def _timed_overlays(plan: EditPlan, settings: Settings, D: float) -> tuple[dict 
     hook = None
     if plan.hook:
         hook = {"text": plan.hook.upper(), "s": 0.05, "e": round(min(3.2, max(1.5, D * 0.35)), 3)}
+        if plan.shots:                    # insane montage: big title, one word per beat, gone on the drop
+            hook["big"] = True
+            if plan.hook_end:
+                hook["e"] = round(plan.hook_end, 3)
+            words = hook["text"].split()
+            beats = sorted(b for b in plan.hook_beats if b < hook["e"] - 0.35) or [0.0]
+            if len(words) > len(beats) and len(beats) > 1:          # not enough beats: use half-beats
+                step = beats[1] - beats[0]
+                beats = sorted(set(beats + [round(b + step / 2, 3) for b in beats if b + step / 2 < hook["e"] - 0.35]))
+            times = [max(0.05, beats[min(i, len(beats) - 1)]) for i in range(len(words))]
+            hook["times"] = [round(t, 3) for t in times]
     cta = None
     if settings.cta and D >= 8:
         s = round(max(D - 2.6, (hook["e"] + 0.5) if hook else 0), 3)
@@ -271,6 +306,8 @@ def render_hyperframes(chunks: list[Chunk], plan: EditPlan, settings: Settings, 
             .replace("__D__", f"{D:.3f}").replace("__CAPY__", str(CAPTION_Y)).replace("__SAFEX__", str(SAFE_X))
             .replace("__HOOKY__", str(HOOK_Y)).replace("__CTAY__", str(CTA_Y))
             .replace("__HOOKSIZE__", str(hook_size))
+            .replace("__HOOKBIG__", str(118 if not hook or len(hook["text"]) <= 20
+                                        else 100 if len(hook["text"]) <= 34 else 82))
             .replace("__FONT__", style["font"]).replace("__WEIGHT__", str(style["weight"]))
             .replace("__COLOR__", style["color"]).replace("__ACCENT__", style["accent"])
             .replace("__STROKE__", str(style["stroke"])))

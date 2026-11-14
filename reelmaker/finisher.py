@@ -35,11 +35,30 @@ def _music_input(settings: Settings, plan: EditPlan) -> list:
     return args + ["-i", Path(settings.music).resolve()]
 
 
+def _extra_inputs(settings: Settings, plan: EditPlan, first: int) -> tuple[list, int | None, int | None]:
+    """Input args for the music and the sound-effect track; returns (args, music index, sfx index)."""
+    args: list = []
+    music_idx = sfx_idx = None
+    idx = first
+    if settings.music:
+        args += _music_input(settings, plan)
+        music_idx = idx
+        idx += 1
+    if plan.sfx and Path(plan.sfx).exists():
+        args += ["-i", Path(plan.sfx).resolve()]
+        sfx_idx = idx
+    return args, music_idx, sfx_idx
+
+
 def _audio_graph(settings: Settings, music_idx: int | None, plan: EditPlan | None = None,
-                 duration: float = 0.0) -> str:
-    """Filtergraph producing [mix] from [0:a] (+ optional music)."""
+                 duration: float = 0.0, sfx_idx: int | None = None) -> str:
+    """Filtergraph producing [mix] from [0:a] (+ optional music and sound effects)."""
     montage = plan is not None and plan.mode == "montage"
+    fx = (f"[{sfx_idx}:a]aresample=48000,aformat=channel_layouts=stereo[fx];" if sfx_idx is not None else "")
     if music_idx is None:
+        if fx:
+            return (f"[0:a]{MONTAGE_CHAIN if montage else VOICE_CHAIN}[orig];{fx}"
+                    f"[orig][fx]amix=inputs=2:duration=first:normalize=0[mix]")
         return f"[0:a]{MONTAGE_CHAIN if montage else VOICE_CHAIN}[mix]"
     if montage:   # the music leads, the original sound sits underneath
         fade = max(0.0, duration - 1.2)
@@ -52,7 +71,8 @@ def _audio_graph(settings: Settings, music_idx: int | None, plan: EditPlan | Non
         return (f"[0:a]{MONTAGE_CHAIN},volume=0.32[orig];"
                 f"[{music_idx}:a]aresample=48000,{loop}aformat=channel_layouts=stereo,"
                 f"afade=t=in:st=0:d=0.005,afade=t=out:st={fade:.3f}:d=1.2[mu];"   # keep the first beat's punch
-                f"[orig][mu]amix=inputs=2:duration=first:normalize=0[mix]")
+                + (f"{fx}[orig][mu][fx]amix=inputs=3:duration=first:normalize=0[mix]" if fx else
+                   "[orig][mu]amix=inputs=2:duration=first:normalize=0[mix]"))
     return (f"[0:a]{VOICE_CHAIN},asplit=2[vo1][vo2];"
             f"[{music_idx}:a]aresample=48000,aformat=channel_layouts=stereo,volume={settings.music_volume:.3f}[mu];"
             f"[mu][vo2]sidechaincompress=threshold=0.04:ratio=8:attack=15:release=400[duck];"
@@ -61,11 +81,9 @@ def _audio_graph(settings: Settings, music_idx: int | None, plan: EditPlan | Non
 
 def _measure_loudness(edited: Path, settings: Settings, plan: EditPlan, duration: float) -> dict | None:
     cmd = [ffmpeg(), "-hide_banner", "-nostats", "-i", edited]
-    music_idx = None
-    if settings.music:
-        cmd += _music_input(settings, plan)
-        music_idx = 1
-    graph = _audio_graph(settings, music_idx, plan, duration) + \
+    extra, music_idx, sfx_idx = _extra_inputs(settings, plan, 1)
+    cmd += extra
+    graph = _audio_graph(settings, music_idx, plan, duration, sfx_idx) + \
         f";[mix]loudnorm=I={settings.loudness}:TP=-1.5:LRA=11:print_format=json[out]"
     cmd += ["-filter_complex", graph, "-map", "[out]", "-t", f"{duration:.3f}", "-f", "null", "-"]
     try:
@@ -114,13 +132,10 @@ def finish(edited: Path, overlay: OverlayResult, plan: EditPlan, settings: Setti
         idx += 1
     elif overlay.kind == "ass" and overlay.path:
         v_graph = f"[0:v]ass={overlay.path.name},format=yuv420p[v]"   # relative path: run from work dir
-    music_idx = None
-    if settings.music:
-        cmd += _music_input(settings, plan)
-        music_idx = idx
-        idx += 1
+    extra, music_idx, sfx_idx = _extra_inputs(settings, plan, idx)
+    cmd += extra
 
-    a_graph = _audio_graph(settings, music_idx, plan, duration) + \
+    a_graph = _audio_graph(settings, music_idx, plan, duration, sfx_idx) + \
         f";[mix]{_loudnorm(settings, meas)},aresample=48000[a]"
     cmd += ["-filter_complex", f"{v_graph};{a_graph}", "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high", "-level:v", "4.2",

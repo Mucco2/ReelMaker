@@ -34,6 +34,9 @@ def _make_parser() -> argparse.ArgumentParser:
     m.add_argument("input", help="video file path or link (YouTube, TikTok, Instagram, ...)")
     m.add_argument("--mode", choices=["auto", "speech", "montage"],
                    help="auto (default) | speech = edit around what is said | montage = best moments cut to the music")
+    m.add_argument("--fx", choices=["insane", "classic"],
+                   help="montage style: insane (default: speed ramps, slow motion, shake, flashes, sound effects)"
+                        " | classic (plain cuts on the beat)")
     m.add_argument("--text-language", help="language for hook/post text when the video has no speech, e.g. da")
     m.add_argument("--max-duration", type=float, help="longest the reel may be, seconds (default 60)")
     m.add_argument("--count", type=int, choices=range(1, 6), metavar="N",
@@ -83,6 +86,7 @@ def _settings_from(args: argparse.Namespace) -> tuple[Settings, set[str]]:
     if args.max_duration:
         s.target_duration = args.max_duration
     put("mode", args.mode)
+    put("fx", args.fx)
     put("text_language", args.text_language)
     put("count", args.count)
     put("platform", args.platform)

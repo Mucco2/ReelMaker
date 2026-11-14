@@ -92,6 +92,7 @@ def make_reel(src: str, settings: Settings, ref: str | None = None, style_file: 
             "hook": plan.hook, "kept_ranges": plan.segments, "final_duration": round(timeline.duration, 3),
             "overlay": overlay.kind, "language": settings.speech_language or settings.text_language,
             "mode": plan.mode, "music_start": plan.music_start,
+            "shots": [{k: v for k, v in s.to_dict().items() if k != "events"} for s in plan.shots],
         }, indent=2, ensure_ascii=False), encoding="utf-8")
         finals.append(final)
         print(f"RESULT_DIR={out_dir.resolve()}", flush=True)

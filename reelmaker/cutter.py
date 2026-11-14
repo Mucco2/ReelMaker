@@ -154,7 +154,31 @@ def _render_piece(idx: int, piece: Piece, info: MediaInfo, mode: str, settings: 
 
 # --------------------------------------------------------------------------- main entry
 
+def _cut_fx(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tuple[Path, Timeline]:
+    """Insane montage: every shot rendered by the FX engine, plus the sound-effect track."""
+    from .fx import build_sfx, render_shots, write_wav
+    try:
+        edited, _ = render_shots(info, plan.shots, settings, work)
+    except Exception as e:   # never lose the reel: fall back to plain beat-synced cuts
+        warn(AGENT, f"Effects failed ({type(e).__name__}: {str(e)[:200]}) - using simple cuts instead")
+        plan.segments = [(s0, s0 + sh.frames / FPS) for sh in plan.shots
+                         for s0 in [max(0.0, min(sh.src_start, info.duration - sh.frames / FPS - 0.05))]]
+        plan.shots, plan.sfx_events, plan.sfx = [], [], None
+        return cut(info, plan, settings, work)
+    pieces = [Piece(src_start=s, src_end=e, out_start=sh.out_start, frames=sh.frames)
+              for sh, (s, e) in zip(plan.shots, plan.segments)]
+    tl = Timeline(pieces)
+    if plan.sfx_events:
+        try:
+            plan.sfx = str(write_wav(work / "sfx.wav", build_sfx(plan.sfx_events, tl.duration)))
+        except Exception as e:  # sound effects are a bonus
+            warn(AGENT, f"Sound effects skipped ({type(e).__name__})")
+    return edited, tl
+
+
 def cut(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tuple[Path, Timeline]:
+    if plan.shots:
+        return _cut_fx(info, plan, settings, work)
     sw = Stopwatch()
     finder = None
     if settings.reframe in ("auto", "face", "smart") and not info.is_vertical:

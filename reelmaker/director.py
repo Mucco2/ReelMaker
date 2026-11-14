@@ -14,7 +14,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import FILLER_WORDS, Settings, filler_words
+from .config import FILLER_WORDS, FPS, Settings, filler_words
 from .utils import log, warn
 
 AGENT = "Director"
@@ -57,9 +57,17 @@ class EditPlan:
     mode: str = "speech"                          # speech | montage
     music_start: float = 0.0                      # where in the song the reel starts (montage, beat-aligned)
     music_loop: float = 0.0                       # montage: whole-beat length of song to loop if it's too short
+    # insane montage edit (fx.py / hype.py)
+    shots: list = field(default_factory=list)     # fx.Shot per clip; empty = classic cutter
+    sfx_events: list = field(default_factory=list)  # [reel time, kind, gain] sound effects
+    sfx: str | None = None                        # rendered sound-effect track (set by the cutter)
+    hook_end: float | None = None                 # hook leaves exactly on the drop
+    hook_beats: list = field(default_factory=list)  # beat times for the word-by-word hook
 
     @property
     def duration(self) -> float:
+        if self.shots:
+            return sum(s.frames for s in self.shots) / FPS
         return sum(e - s for s, e in self.segments)
 
 

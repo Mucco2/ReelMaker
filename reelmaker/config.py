@@ -64,6 +64,7 @@ CAPTION_STYLES = {
 class Settings:
     # what kind of edit
     mode: str = "auto"                      # auto | speech | montage (montage = no talking, cut to the music)
+    fx: str = "insane"                      # montage style: insane (speed ramps, effects, SFX) | classic
     text_language: str | None = None        # language for hook/post text when the video has no speech
 
     # length & pacing

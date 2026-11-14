@@ -466,6 +466,9 @@ def _name_text(stem: str) -> tuple[str, list[str]]:
 # --------------------------------------------------------------------------- main entry
 
 def plan_montage(info: MediaInfo, settings: Settings, work: Path, count: int = 1) -> list[EditPlan]:
+    if settings.fx == "insane":
+        from .hype import plan_hype
+        return plan_hype(info, settings, work, count)
     an = analyze(info, work)
     score = excitement(an)
     dur = max(0.1, info.duration)
