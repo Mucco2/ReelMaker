@@ -1,0 +1,4 @@
+* text=auto
+# Windows batch files must keep CRLF line endings or cmd.exe can misread labels and goto/call
+*.bat text eol=crlf
+*.onnx binary

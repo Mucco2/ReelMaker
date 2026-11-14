@@ -1,0 +1,20 @@
+# installed by setup.bat
+.venv/
+engine/node_modules/
+assets/models/
+
+# videos, renders and caches made while using the app
+work/
+output/
+
+# personal window settings
+gui_settings.json
+
+# Python / editors / OS
+__pycache__/
+*.py[cod]
+*.log
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
