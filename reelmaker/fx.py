@@ -38,6 +38,7 @@ _NOWIN = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") 
 class Shot:
     src_start: float                    # source second of the shot's first frame
     frames: int                         # output frames
+    source: int = 0                     # which input video (multi-video edits)
     out_start: float = 0.0              # where it sits in the reel (seconds)
     speed: str = "normal"               # normal | slowmo | velocity | ramp_down | ramp_up | stutter
     base_speed: float = 1.0
@@ -651,6 +652,8 @@ def write_wav(path: Path, audio: np.ndarray) -> Path:
 
 def place_wide_crops(info: MediaInfo, shots: list[Shot]) -> None:
     """Centre of the wide 9:16 crop for every shot: a face if there is one, else where the detail is."""
+    if not shots:
+        return
     if info.is_vertical:
         for sh in shots:
             sh.centre_x = 0.5
@@ -701,13 +704,20 @@ def saliency_focus(info: MediaInfo, t: float) -> tuple[float, float]:
 
 # --------------------------------------------------------------------------- main entry
 
-def render_shots(info: MediaInfo, shots: list[Shot], settings: Settings, work: Path) -> tuple[Path, list[np.ndarray]]:
-    """Renders every shot (in parallel) and joins them. Returns (edited video with original sound, audio parts)."""
+def render_shots(infos: MediaInfo | list[MediaInfo], shots: list[Shot], settings: Settings,
+                 work: Path) -> tuple[Path, list[np.ndarray]]:
+    """Renders every shot (in parallel) and joins them. Returns (edited video with original sound, audio parts).
+
+    `infos` is one video, or a list when the edit mixes several videos (Shot.source picks one)."""
     sw = Stopwatch()
-    place_wide_crops(info, shots)
+    infos = [infos] if isinstance(infos, MediaInfo) else list(infos)
+    for sh in shots:
+        sh.source = sh.source if 0 <= sh.source < len(infos) else 0
+    for si, info in enumerate(infos):
+        place_wide_crops(info, [sh for sh in shots if sh.source == si])
     for sh in shots:
         if sh.focus is None and sh.framing in ("medium", "tight", "push", "pull"):
-            sh.focus = saliency_focus(info, sh.src_start + 0.3)
+            sh.focus = saliency_focus(infos[sh.source], sh.src_start + 0.3)
     seg_dir = work / "pieces"
     seg_dir.mkdir(parents=True, exist_ok=True)
     for old in list(seg_dir.glob("*.mov")) + list(seg_dir.glob("*.mp4")):
@@ -716,7 +726,8 @@ def render_shots(info: MediaInfo, shots: list[Shot], settings: Settings, work: P
     files = [seg_dir / f"s{i:04d}.mp4" for i in range(len(shots))]
     pool = ThreadPoolExecutor(max_workers=4)
     try:
-        futures = [pool.submit(render_shot, i, sh, info, settings, files[i]) for i, sh in enumerate(shots)]
+        futures = [pool.submit(render_shot, i, sh, infos[sh.source], settings, files[i])
+                   for i, sh in enumerate(shots)]
         audio = [f.result() for f in futures]
     except BaseException:
         pool.shutdown(wait=True, cancel_futures=True)     # stop queued shots: the fallback takes over

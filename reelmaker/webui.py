@@ -208,25 +208,37 @@ JOB: Job | None = None
 
 # --------------------------------------------------------------------------- helpers for the page
 
-def pick_file(kind: str) -> str:
-    """Native Windows file dialog, run in a separate process so it never fights the server threads."""
-    types = core.VIDEO_TYPES if kind == "video" else core.AUDIO_TYPES
-    title = "Vælg en video" if kind == "video" else "Vælg musik"
+def pick_file(kind: str) -> str | list[str]:
+    """Native Windows file dialog, run in a separate process so it never fights the server threads.
+
+    kind "videos" lets the user pick several files at once and returns a list."""
+    types = core.AUDIO_TYPES if kind == "music" else core.VIDEO_TYPES
+    title = {"music": "Vælg musik", "videos": "Vælg en eller flere videoer"}.get(kind, "Vælg en video")
+    if kind == "videos":
+        ask = (f"p=filedialog.askopenfilenames(parent=r, title={title!r}, filetypes={types!r})\n"
+               "out=[os.path.normpath(x) for x in p] if p else []\n")
+    else:
+        ask = (f"p=filedialog.askopenfilename(parent=r, title={title!r}, filetypes={types!r})\n"
+               "out=os.path.normpath(p) if p else ''\n")
     code = (
         "import ctypes,json,os,sys,tkinter as tk\n"
         "from tkinter import filedialog\n"
         "try: ctypes.windll.shcore.SetProcessDpiAwareness(1)\n"
         "except Exception: pass\n"
         "r=tk.Tk(); r.withdraw(); r.attributes('-topmost', True); r.update()\n"
-        f"p=filedialog.askopenfilename(parent=r, title={title!r}, filetypes={types!r})\n"
-        "r.destroy(); sys.stdout.write(json.dumps(os.path.normpath(p) if p else ''))\n"
+        + ask +
+        "r.destroy(); sys.stdout.write(json.dumps(out))\n"
     )
     proc = subprocess.run([core.python_for_subprocess(), "-c", code], capture_output=True, text=True,
                           encoding="utf-8", creationflags=CREATE_NO_WINDOW, timeout=600)
+    empty = [] if kind == "videos" else ""
     try:
-        return json.loads(proc.stdout.strip() or '""')
+        got = json.loads(proc.stdout.strip() or "null")
     except ValueError:
-        return ""
+        return empty
+    if kind == "videos":
+        return [str(x) for x in got] if isinstance(got, list) else empty
+    return got if isinstance(got, str) else empty
 
 
 def make_thumb(src: Path, fill: str = "blur") -> Path | None:
@@ -396,7 +408,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 core.save_settings({**core.DEFAULTS, **(data.get("opts") or {})})
                 return self._json({"ok": True})
             if url.path == "/api/pick":
-                return self._json({"path": pick_file(data.get("kind", "video"))})
+                got = pick_file(data.get("kind", "video"))
+                return self._json({"paths": got} if isinstance(got, list) else {"path": got})
             if url.path == "/api/start":
                 return self._start(data)
             if url.path == "/api/stop":
@@ -442,12 +455,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         global JOB
         if JOB and JOB.running:
             return self._json({"error": "Der bliver allerede lavet en reel."}, 409)
-        video = (data.get("video") or "").strip().strip('"')
+        raw = data.get("videos") or [data.get("video") or ""]
+        videos = [str(v).strip().strip('"') for v in raw if str(v or "").strip()][:8]
         opts = {**core.DEFAULTS, **(data.get("opts") or {})}
-        if not video:
+        if not videos:
             return self._json({"error": "Vælg en video først."}, 400)
-        if not re.match(r"^https?://", video, re.I) and not Path(video).is_file():
-            return self._json({"error": f"Kan ikke finde filen:\n{video}"}, 400)
+        for video in videos:
+            if not re.match(r"^https?://", video, re.I) and not Path(video).is_file():
+                return self._json({"error": f"Kan ikke finde filen:\n{video}"}, 400)
         music = (opts.get("music") or "").strip().strip('"')
         if music and not Path(music).is_file():
             return self._json({"error": f"Kan ikke finde musikfilen:\n{music}"}, 400)
@@ -456,7 +471,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             count = max(1, min(5, int(opts.get("count") or 1)))
         except (TypeError, ValueError):
             count = 1
-        cmd = core.build_command(video, opts)
+        cmd = core.build_command(videos if len(videos) > 1 else videos[0], opts)
         _log("start: " + " ".join(cmd[3:]))
         JOB = Job(cmd, count)
         return self._json({"ok": True})
@@ -469,6 +484,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json({"error": "Tom fil"}, 400)
         UPLOADS.mkdir(parents=True, exist_ok=True)
         dest = UPLOADS / name
+        k = 2
+        while dest.exists():                     # two different "clip.mp4" files must not overwrite each other
+            dest = UPLOADS / f"{Path(name).stem}_{k}{Path(name).suffix}"
+            k += 1
         tmp = dest.with_suffix(dest.suffix + ".part")
         left = n
         with tmp.open("wb") as f:

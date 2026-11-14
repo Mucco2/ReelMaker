@@ -63,6 +63,7 @@ class EditPlan:
     sfx: str | None = None                        # rendered sound-effect track (set by the cutter)
     hook_end: float | None = None                 # hook leaves exactly on the drop
     hook_beats: list = field(default_factory=list)  # beat times for the word-by-word hook
+    sources: list = field(default_factory=list)   # MediaInfo of every input video (multi-video montage)
 
     @property
     def duration(self) -> float:
@@ -279,6 +280,9 @@ def _request_kwargs(segs: list[dict], src_duration: float, max_len: float, setti
     user = (f"Make {count} reel{'s' if count > 1 else ''}. Video length: {src_duration:.1f}s. "
             f"Maximum reel length: {max_len:.0f}s. Target: about {target:.0f}s."
             f"{notes}\n\nTranscript segments:\n" + "\n".join(lines))
+    if settings.prompt and settings.prompt.strip():
+        user += ("\n\nThe creator's instructions (follow them when choosing the moments and writing the text):\n"
+                 + settings.prompt.strip())
 
     kwargs = dict(
         model=settings.ai_model,

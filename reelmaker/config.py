@@ -83,6 +83,7 @@ class Settings:
     caption_style: str = "bold"
     accent: str | None = None
     hook: str | None = None                 # big title at the start (auto if AI is on)
+    prompt: str | None = None               # free-text instructions for Claude ("put video 2 after the jump")
     cta: str | None = "auto"                # "auto" = translated by speech language, None = off
     progress_bar: bool = True
     animator: str = "hyperframes"           # hyperframes | ass

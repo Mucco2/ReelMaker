@@ -26,6 +26,8 @@ word-by-word captions, a hook title, zoom cuts and clean audio.
    Slå **Vis TikTok-knapper** til for at tjekke, at teksten ikke bliver dækket af appens knapper.
 4. Udfyld det, du vil (alt er valgfrit):
    - **Hook-tekst**: den store titel i starten, fx `Jeg droppede telefonen i 30 dage`.
+   - **Instruktioner til AI**: skriv med dine egne ord, hvad Claude skal gøre, fx
+     `Start med bilen udefra. Slowmotion når han overhaler en lastbil.`
    - **Reference-reel link**: en reel, hvis stil du kan lide. Programmet kopierer dens længde og tempo.
    - **Maks længde** og **Antal reels**: vælg 2-5 for at få flere forskellige reels fra én lang video.
    - **Undertekst-stil** (Fed / Boks / Ren), **Farve**, **Tempo**, **Sprog**, **Musik**.
@@ -47,6 +49,13 @@ word-by-word captions, a hook title, zoom cuts and clean audio.
   - Med Claude-nøgle kigger Claude på billederne, vælger klippene og siger hvor der skal zoomes ind.
   - **Effekter: Rolige** giver de gamle, enkle klip på beatet.
 - **Automatisk** (standard) vælger selv ud fra, om der bliver talt.
+
+**Flere videoer i én reel:** træk flere videoer ind på én gang, eller tryk **Tilføj flere videoer**.
+De får numre (1, 2, 3 …) i den rækkefølge, du tilføjer dem, og bliver klippet sammen til én montage til musikken.
+Skriv i **Instruktioner til AI** hvordan de skal blandes, fx
+`Sæt video 2 lige efter bilen drifter i video 1, præcis på droppet. Slut af med video 3.`
+Claude ser billeder fra alle videoerne (ca. ét pr. sekund), finder de øjeblikke du beskriver, og lægger dem så
+de rammer et klip eller droppet i musikken. Uden Claude-nøgle fordeles klippene automatisk efter videoernes længde.
 
 Programmet forstår dansk tale, fjerner "øh" og pauser og skriver "FØLG FOR MERE" til sidst.
 Teksten til sidst følger videoens sprog.
@@ -109,12 +118,19 @@ you'll need to type the hook text yourself.
 ## Command line (more control)
 
 ```
-.venv\Scripts\python.exe -m reelmaker VIDEO_OR_LINK [options]
+.venv\Scripts\python.exe -m reelmaker VIDEO_OR_LINK [MORE_VIDEOS ...] [options]
+```
+
+Give several videos to mix them into one montage, and steer it with `--prompt`:
+
+```
+.venv\Scripts\python.exe -m reelmaker drift.mp4 burnout.mp4 --music song.mp3 --prompt "Put video 2 right after the drift in video 1, on the drop"
 ```
 
 | Option | What it does |
 |---|---|
 | `--mode montage` | `auto` (default), `speech` (edit around what's said) or `montage` (best moments cut to the music, for videos without talking) |
+| `--prompt "text"` | Instructions for Claude in your own words: which moments, which order, where to use slow motion, how to connect several videos |
 | `--fx classic` | Montage style: `insane` (default: speed ramps, slow motion, close-ups, shake, flashes, sound effects) or `classic` (plain cuts on the beat) |
 | `--text-language da` | Language for the hook and post text when the video has no speech |
 | `--max-duration 45` | Longest the reel may be, in seconds |

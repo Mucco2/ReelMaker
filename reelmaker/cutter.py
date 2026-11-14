@@ -157,10 +157,13 @@ def _render_piece(idx: int, piece: Piece, info: MediaInfo, mode: str, settings: 
 def _cut_fx(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tuple[Path, Timeline]:
     """Insane montage: every shot rendered by the FX engine, plus the sound-effect track."""
     from .fx import build_sfx, render_shots, write_wav
+    sources = plan.sources or [info]
     try:
-        edited, _ = render_shots(info, plan.shots, settings, work)
+        edited, _ = render_shots(sources, plan.shots, settings, work)
     except Exception as e:   # never lose the reel: fall back to plain beat-synced cuts
         warn(AGENT, f"Effects failed ({type(e).__name__}: {str(e)[:200]}) - using simple cuts instead")
+        if len(sources) > 1:
+            return _cut_simple_multi(sources, plan, settings, work)
         plan.segments = [(s0, s0 + sh.frames / FPS) for sh in plan.shots
                          for s0 in [max(0.0, min(sh.src_start, info.duration - sh.frames / FPS - 0.05))]]
         plan.shots, plan.sfx_events, plan.sfx = [], [], None
@@ -174,6 +177,35 @@ def _cut_fx(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> 
         except Exception as e:  # sound effects are a bonus
             warn(AGENT, f"Sound effects skipped ({type(e).__name__})")
     return edited, tl
+
+
+def _cut_simple_multi(sources: list[MediaInfo], plan: EditPlan, settings: Settings,
+                      work: Path) -> tuple[Path, Timeline]:
+    """Emergency path for multi-video edits: plain cuts, each piece from its own video, still on the beat."""
+    pieces: list[Piece] = []
+    infos: list[MediaInfo] = []
+    for sh in plan.shots:
+        info = sources[sh.source if 0 <= sh.source < len(sources) else 0]
+        d = sh.frames / FPS
+        s0 = max(0.0, min(sh.src_start, info.duration - d - 0.05))
+        pieces.append(Piece(src_start=s0, src_end=s0 + d, out_start=sh.out_start, frames=sh.frames))
+        infos.append(info)
+    plan.segments = [(p.src_start, p.src_end) for p in pieces]
+    plan.shots, plan.sfx_events, plan.sfx = [], [], None
+    seg_dir = work / "pieces"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    for old in list(seg_dir.glob("*.mov")) + list(seg_dir.glob("*.mp4")):
+        old.unlink()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        futures = [pool.submit(_render_piece, i, p, inf, "fit" if inf.is_vertical else "crop", settings,
+                               seg_dir / f"p{i:04d}.mov") for i, (p, inf) in enumerate(zip(pieces, infos))]
+        files = [f.result() for f in futures]
+    listfile = seg_dir / "list.txt"
+    listfile.write_text("".join(f"file '{f.name}'\n" for f in files), encoding="utf-8")
+    edited = work / "edited.mov"
+    run([ffmpeg(), "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+         "-i", listfile.name, "-c", "copy", edited.resolve()], cwd=seg_dir, what="joining pieces")
+    return edited, Timeline(pieces)
 
 
 def cut(info: MediaInfo, plan: EditPlan, settings: Settings, work: Path) -> tuple[Path, Timeline]:

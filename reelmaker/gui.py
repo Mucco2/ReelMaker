@@ -47,7 +47,7 @@ VIDEO_TYPES = [("Video", "*.mp4 *.mov *.mkv *.webm *.avi *.m4v *.wmv *.flv *.mts
 AUDIO_TYPES = [("Lyd", "*.mp3 *.wav *.m4a *.aac *.ogg *.flac"), ("Alle filer", "*.*")]
 
 DEFAULTS = {
-    "mode": "auto", "fx": "insane",
+    "mode": "auto", "fx": "insane", "prompt": "",
     "hook": "", "reference": "", "max_len": "60", "count": 1, "style": "bold", "accent": "",
     "pacing": "normal", "language": "", "music": "", "cta": "", "no_cta": False,
     "captions": True, "zoom": True, "progress": True, "fillers": True, "enhance": True,
@@ -67,10 +67,12 @@ def python_for_subprocess() -> str:
     return str(exe)
 
 
-def build_command(video: str, opts: dict, python: str | None = None) -> list[str]:
-    """Turn the window's settings into the reelmaker command line."""
+def build_command(video: str | list[str], opts: dict, python: str | None = None) -> list[str]:
+    """Turn the window's settings into the reelmaker command line (one video, or several to mix)."""
     o = {**DEFAULTS, **opts}
-    cmd = [python or python_for_subprocess(), "-m", "reelmaker", "make", video.strip().strip('"')]
+    videos = [video] if isinstance(video, str) else list(video)
+    videos = [v.strip().strip('"') for v in videos if v and v.strip().strip('"')]
+    cmd = [python or python_for_subprocess(), "-m", "reelmaker", "make", *videos]
     if o.get("mode") in ("speech", "montage"):
         cmd += ["--mode", o["mode"]]
     if o.get("fx") in ("insane", "classic"):
@@ -78,6 +80,8 @@ def build_command(video: str, opts: dict, python: str | None = None) -> list[str
     cmd += ["--text-language", "da"]          # Danish hook/post text for videos without speech
     if o["hook"].strip():
         cmd += ["--hook", o["hook"].strip()]
+    if str(o.get("prompt") or "").strip():
+        cmd += ["--prompt=" + " ".join(str(o["prompt"]).split())]   # "=" form: text may start with "-"
     if o["reference"].strip():
         cmd += ["--reference", o["reference"].strip().strip('"')]
     try:
@@ -170,7 +174,7 @@ def load_settings() -> dict:
         return dict(DEFAULTS)
 
 
-NOT_REMEMBERED = {"hook"}   # a hook belongs to one video, so it is not carried over to the next
+NOT_REMEMBERED = {"hook", "prompt"}   # they belong to one video, so they are not carried over to the next
 
 
 def save_settings(opts: dict) -> None:

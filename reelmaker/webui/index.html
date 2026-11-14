@@ -125,6 +125,19 @@ select option{background:#15151f}
 .vmeta .ok{color:var(--ok)}
 .upbar{position:absolute;left:0;right:0;bottom:0;height:3px;background:transparent}
 .upbar i{display:block;height:100%;width:0;background:var(--grad);transition:width .2s}
+/* several videos */
+.vlist{display:none;flex-direction:column;gap:8px;margin-top:12px}
+.vlist.show{display:flex}
+.vitem{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.035);border:1px solid var(--line)}
+.vnum{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-weight:800;font-size:13px;background:var(--grad);color:#fff;flex:none}
+.vth{width:30px;height:52px;border-radius:6px;background:#1a1a26 center/cover no-repeat;flex:none;border:1px solid var(--line)}
+.vnm{flex:1;min-width:0;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vitem .btn{flex:none}
+.addv{display:none;margin-top:10px}
+.addv.show{display:inline-flex}
+textarea.ta{width:100%;min-height:80px;resize:vertical;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.25);padding:11px 14px;outline:none;transition:.18s;color:var(--text);font:inherit;font-size:13.5px;line-height:1.45}
+textarea.ta:focus{border-color:rgba(255,46,126,.55);box-shadow:0 0 0 4px rgba(255,46,126,.12);background:rgba(0,0,0,.35)}
+.tahint{font-size:11.5px;color:var(--faint);margin-top:6px}
 .or{display:flex;align-items:center;gap:12px;color:var(--faint);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;margin:14px 0}
 .or:before,.or:after{content:"";flex:1;height:1px;background:var(--line)}
 
@@ -361,12 +374,12 @@ select option{background:#15151f}
       </div>
 
       <div class="card">
-        <div class="card-h"><div class="step">1</div><div><h2>Vælg video</h2><p>En fil fra din computer eller et link</p></div></div>
+        <div class="card-h"><div class="step">1</div><div><h2>Vælg video</h2><p>En eller flere filer fra din computer, eller et link</p></div></div>
         <div class="drop" id="drop">
           <div class="drop-in">
             <div class="drop-empty">
               <div class="drop-icon"><i data-ic="upload"></i></div>
-              <div class="drop-title">Træk din video hertil</div>
+              <div class="drop-title">Træk dine videoer hertil</div>
               <div class="drop-sub">MP4, MOV, MKV, WEBM og flere</div>
               <button class="btn" id="pickVideo"><i data-ic="folder"></i>Vælg fil</button>
             </div>
@@ -382,6 +395,8 @@ select option{background:#15151f}
             <div class="upbar"><i id="upbar"></i></div>
           </div>
         </div>
+        <div class="vlist" id="vlist"></div>
+        <button class="btn sm addv" id="addVideo"><i data-ic="plus"></i>Tilføj flere videoer</button>
         <div class="or">eller indsæt et link</div>
         <div class="input"><i data-ic="link"></i><input id="link" placeholder="https://www.youtube.com/…  ·  TikTok  ·  Instagram" spellcheck="false"></div>
       </div>
@@ -395,6 +410,12 @@ select option{background:#15151f}
         <div class="field">
           <div class="label">Hook-tekst <em>valgfri · vises stort i starten</em></div>
           <div class="input"><i data-ic="type"></i><input id="hook" data-opt="hook" maxlength="60" placeholder="Fx: Jeg droppede telefonen i 30 dage"></div>
+        </div>
+        <div class="field">
+          <div class="label">Instruktioner til AI <em>valgfri · hvad skal ske hvornår</em></div>
+          <textarea class="ta" id="prompt" data-opt="prompt" maxlength="600" spellcheck="false"
+            placeholder="Fx: Start med video 3. Sæt video 2 lige efter bilen drifter i video 1. Slowmotion når han hopper."></textarea>
+          <div class="tahint" id="promptHint">Kræver Claude AI. Videoerne har numre i den rækkefølge, du tilføjer dem.</div>
         </div>
         <div class="field">
           <div class="label">Reference-reel <em>valgfri · kopierer længde og tempo</em></div>
@@ -618,7 +639,7 @@ const MODE_HINT = {
 };
 const DEF = { mode:"auto", fx:"insane", hook:"", reference:"", max_len:"60", count:1, style:"bold", accent:"", pacing:"normal", language:"",
               music:"", cta:"", no_cta:false, captions:true, zoom:true, progress:true, fillers:true, enhance:true };
-const S = { opts: { ...DEF }, video: "", isUrl: false, mode: "preview", seq: 0, timer: null, results: [], active: 0,
+const S = { opts: { ...DEF }, video: "", videos: [], isUrl: false, mode: "preview", seq: 0, timer: null, results: [], active: 0,
             uploading: false, tt: false, recent: [], lastJob: null };
 
 const STYLE = {
@@ -760,6 +781,8 @@ function fitStage() {
 /* ---------------------------------------------------------------- video selection */
 function setVideo(path, isUrl = false) {
   S.video = path; S.isUrl = isUrl;
+  if (!path || isUrl) S.videos = []; else if (!S.videos.includes(path)) S.videos = [path];
+  renderVList();
   const drop = $("#drop");
   if (!path) {
     drop.classList.remove("has-video"); $("#link").value = "";
@@ -771,7 +794,7 @@ function setVideo(path, isUrl = false) {
     $("#sbg").className = "sbg empty"; $("#sbg").style.backgroundImage = ""; $("#sph").style.display = "";
     return;
   }
-  $("#link").value = "";
+  if (S.videos.length < 2) $("#link").value = "";      // a single video replaces a link (and the other way round)
   drop.classList.add("has-video");
   const name = path.split(/[\\/]/).pop();
   $("#vname").textContent = name;
@@ -786,13 +809,72 @@ function setVideo(path, isUrl = false) {
     $("#sbg").className = "sbg"; $("#sbg").style.backgroundImage = `url("${url}")`; $("#sph").style.display = "none";
   };
   img.src = url;
+  if (S.videos.length > 1) {
+    $("#vname").textContent = `${S.videos.length} videoer valgt`;
+    $("#vname").title = S.videos.join("\n");
+    $("#vmeta").innerHTML = `<span class="ok">${ic("check")}</span> Bliver klippet sammen til én reel`;
+  }
 }
-async function pickVideo() { const r = await api("/api/pick", { kind: "video" }); if (r.path) setVideo(r.path); }
+function thumbUrl(p) { return `/api/thumb?p=${encodeURIComponent(p)}&fill=crop&t=${TOKEN}`; }
+function renderVList() {
+  const box = $("#vlist");
+  const many = S.videos.length > 1;
+  box.classList.toggle("show", many);
+  $("#addVideo").classList.toggle("show", S.videos.length > 0 && S.videos.length < 8 && !S.isUrl);
+  box.innerHTML = "";
+  if (!many) return;
+  S.videos.forEach((p, i) => {
+    const row = document.createElement("div");
+    row.className = "vitem";
+    row.innerHTML = `<span class="vnum">${i + 1}</span><div class="vth"></div><span class="vnm"></span>` +
+                    `<button class="btn sm ghost" title="Fjern">${ic("x")}</button>`;
+    const link = /^https?:/i.test(p);
+    if (!link) row.querySelector(".vth").style.backgroundImage = `url("${thumbUrl(p)}")`;
+    row.querySelector(".vnm").textContent = link ? p : p.split(/[\\/]/).pop();
+    row.querySelector(".vnm").title = p;
+    row.querySelector("button").onclick = () => removeVideo(i);
+    box.appendChild(row);
+  });
+}
+function addVideos(paths) {
+  const fresh = paths.filter(p => p && !S.videos.includes(p));
+  if (!fresh.length) return;
+  S.videos = [...S.videos, ...fresh].slice(0, 8);
+  S.isUrl = false;
+  setVideo(S.videos[0]);
+  if (S.videos.length > 1) toast(`${S.videos.length} videoer – skriv i "Instruktioner til AI" hvordan de skal blandes`);
+}
+function removeVideo(i) {
+  S.videos.splice(i, 1);
+  if (!S.videos.length) { setVideo(""); return; }
+  setVideo(S.videos[0]);
+}
+async function pickVideo() {
+  const r = await api("/api/pick", { kind: "videos" });
+  const paths = r.paths || (r.path ? [r.path] : []);
+  if (paths.length) { S.videos = []; addVideos(paths); }
+}
+async function pickMoreVideos() {
+  const r = await api("/api/pick", { kind: "videos" });
+  addVideos(r.paths || (r.path ? [r.path] : []));
+}
 
-function uploadFile(file) {
-  if (S.uploading) return;
+async function uploadFiles(files) {
+  if (S.uploading) { toast("Vent til den forrige video er indlæst", false); return; }
+  const list = [...files].filter(f => /^video\//.test(f.type) || /\.(mp4|mov|mkv|webm|avi|m4v|wmv|flv|mts|3gp)$/i.test(f.name));
+  if (!list.length) { toast("Det ligner ikke en video-fil", false); return; }
+  // one file dropped onto one (or no) video replaces it, like before; several files, or a list of 2+, are added
+  const append = S.videos.length >= 2 || (list.length > 1 && S.videos.length >= 1);
+  const n = Math.min(8, list.length);
+  for (let i = 0; i < n; i++) await uploadFile(list[i], append || i > 0);
+}
+function uploadFile(file, append = false) {
+  return new Promise(resolve => _upload(file, append, resolve));
+}
+function _upload(file, append, done) {
+  if (S.uploading) { done(); return; }
   const okType = /^video\//.test(file.type) || /\.(mp4|mov|mkv|webm|avi|m4v|wmv|flv|mts|3gp)$/i.test(file.name);
-  if (!okType) { toast("Det ligner ikke en video-fil", false); return; }
+  if (!okType) { toast("Det ligner ikke en video-fil", false); done(); return; }
   S.uploading = true;
   const drop = $("#drop"); drop.classList.add("has-video");
   $("#vname").textContent = file.name; $("#vmeta").textContent = "Indlæser… 0%";
@@ -808,9 +890,15 @@ function uploadFile(file) {
   xhr.onload = () => {
     S.uploading = false; $("#upbar").style.width = "0";
     let r = {}; try { r = JSON.parse(xhr.responseText); } catch (e) { /* */ }
-    if (r.path) { setVideo(r.path); toast("Videoen er klar"); } else { setVideo(""); showError("Kunne ikke indlæse videoen", r.error || ""); }
+    if (r.path) { if (append) addVideos([r.path]); else { S.videos = []; setVideo(r.path); toast("Videoen er klar"); } }
+    else { if (append && S.videos.length) setVideo(S.videos[0]); else setVideo(""); showError("Kunne ikke indlæse videoen", r.error || ""); }
+    done();
   };
-  xhr.onerror = () => { S.uploading = false; $("#upbar").style.width = "0"; setVideo(""); showError("Kunne ikke indlæse videoen", "Forbindelsen blev afbrudt."); };
+  xhr.onerror = () => {
+    S.uploading = false; $("#upbar").style.width = "0";
+    if (append && S.videos.length) setVideo(S.videos[0]); else setVideo("");
+    showError("Kunne ikke indlæse videoen", "Forbindelsen blev afbrudt."); done();
+  };
   xhr.send(file);
 }
 
@@ -869,10 +957,14 @@ function setProgress(p) {
 async function start() {
   if (S.mode === "running") { await api("/api/stop", {}); toast("Stopper…"); return; }
   const link = $("#link").value.trim();
-  if (link) { S.video = link; S.isUrl = true; }
-  if (!S.video) { toast("Vælg en video eller indsæt et link først", false); $("#drop").classList.add("hover"); setTimeout(() => $("#drop").classList.remove("hover"), 900); return; }
+  const videos = [...S.videos];
+  if (link && /^https?:\/\//i.test(link) && !videos.includes(link)) {
+    if (videos.length >= 2) videos.push(link);                    // joins the list as the last video
+    else videos.splice(0, videos.length, link);                   // replaces a single video, like before
+  }
+  if (!videos.length) { toast("Vælg en video eller indsæt et link først", false); $("#drop").classList.add("hover"); setTimeout(() => $("#drop").classList.remove("hover"), 900); return; }
   if (S.uploading) { toast("Vent til videoen er indlæst", false); return; }
-  const r = await api("/api/start", { video: S.video, opts: S.opts });
+  const r = await api("/api/start", { videos, opts: S.opts });
   if (r.error) { showError("Kunne ikke starte", r.error); return; }
   S.seq = 0; S.results = []; $("#log").innerHTML = ""; setProgress(0);
   $("#rstatus").textContent = "Starter…"; $("#rtime").textContent = "0:00";
@@ -987,6 +1079,9 @@ function setAI(on, masked) {
   $("#aiRemove").style.display = on ? "" : "none";
   $("#aiMasked").textContent = masked || "";
   $("#hook").placeholder = on ? "Valgfri – lad den være tom, så skriver Claude en" : "Fx: Jeg droppede telefonen i 30 dage";
+  $("#promptHint").textContent = on
+    ? "Claude ser alle videoerne og følger dine instruktioner. Videoerne har numre i den rækkefølge, du tilføjer dem."
+    : "Kræver Claude AI (slå det til øverst). Videoerne har numre i den rækkefølge, du tilføjer dem.";
 }
 function aiStatus(kind, msg) {
   const el = $("#aiStatus");
@@ -1024,11 +1119,17 @@ function wire() {
   $("#goBtn").onclick = start;
   $("#pickVideo").onclick = pickVideo;
   $("#changeVideo").onclick = pickVideo;
+  $("#addVideo").onclick = pickMoreVideos;
   $("#clearVideo").onclick = () => setVideo("");
   $("#link").addEventListener("input", e => {
     const v = e.target.value.trim();
+    if (S.videos.length >= 2) return;               // a list of videos: the link joins it on Enter / leaving the box
     if (/^https?:\/\//i.test(v)) { setVideo(v, true); $("#link").value = e.target.value; }
     else if (!v && S.isUrl) { S.video = ""; S.isUrl = false; }
+  });
+  $("#link").addEventListener("change", e => {
+    const v = e.target.value.trim();
+    if (S.videos.length >= 2 && /^https?:\/\/\S+\.\S+/i.test(v)) { addVideos([v]); $("#link").value = ""; }
   });
   $("#openRecent").onclick = openDrawer; $("#closeRecent").onclick = closeDrawer; $("#scrim").onclick = closeDrawer;
   $("#mOk").onclick = () => $("#modal").classList.remove("open");
@@ -1056,7 +1157,7 @@ function wire() {
     if (!hasFiles(e)) return;
     e.preventDefault(); depth = 0; $("#dropov").classList.remove("open");
     if (S.mode === "running") { toast("Vent til den nuværende reel er færdig", false); return; }
-    const f = e.dataTransfer.files[0]; if (f) { setMode("preview"); uploadFile(f); }
+    const files = e.dataTransfer.files; if (files && files.length) { setMode("preview"); uploadFiles(files); }
   });
 
   window.addEventListener("keydown", e => { if (e.ctrlKey && e.key === "Enter") start(); if (e.key === "Escape") { closeDrawer(); $("#modal").classList.remove("open"); $("#aiModal").classList.remove("open"); } });
@@ -1074,7 +1175,7 @@ async function init() {
   S.opts = { ...DEF, ...(st.settings || {}) };
   S.opts.count = Math.max(1, Math.min(5, parseInt(S.opts.count, 10) || 1));
   S.opts.max_len = String(S.opts.max_len || "60");
-  S.opts.hook = "";
+  S.opts.hook = ""; S.opts.prompt = "";
   applyOpts();
   setAI(!!st.ai, st.ai_key);
   if (st.initial) { /^https?:\/\//i.test(st.initial) ? ($("#link").value = st.initial, setVideo(st.initial, true)) : setVideo(st.initial); }

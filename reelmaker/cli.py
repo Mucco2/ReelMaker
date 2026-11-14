@@ -31,7 +31,8 @@ def _make_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command")
 
     m = sub.add_parser("make", help="edit a video into a reel (default)")
-    m.add_argument("input", help="video file path or link (YouTube, TikTok, Instagram, ...)")
+    m.add_argument("input", nargs="+",
+                   help="video file path or link (YouTube, TikTok, Instagram, ...); give several to mix them")
     m.add_argument("--mode", choices=["auto", "speech", "montage"],
                    help="auto (default) | speech = edit around what is said | montage = best moments cut to the music")
     m.add_argument("--fx", choices=["insane", "classic"],
@@ -51,6 +52,7 @@ def _make_parser() -> argparse.ArgumentParser:
     m.add_argument("--caption-style", choices=sorted(CAPTION_STYLES))
     m.add_argument("--accent", help="highlight colour, e.g. \"#FF3366\"")
     m.add_argument("--hook", help="big title shown in the first seconds")
+    m.add_argument("--prompt", help="instructions for Claude, e.g. \"put video 2 right after the jump in video 1\"")
     m.add_argument("--cta", help="call to action at the end (default: 'follow for more' in the video's language)")
     m.add_argument("--no-cta", action="store_true")
     m.add_argument("--no-progress", dest="progress_bar", action="store_false", default=None)
@@ -100,6 +102,7 @@ def _settings_from(args: argparse.Namespace) -> tuple[Settings, set[str]]:
     put("caption_style", args.caption_style)
     put("accent", args.accent)
     put("hook", args.hook.strip() if args.hook and args.hook.strip() else None)
+    put("prompt", args.prompt.strip() if args.prompt and args.prompt.strip() else None)
     put("cta", args.cta)
     if args.no_cta:
         s.cta = None
@@ -170,7 +173,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         from .pipeline import make_reel
         settings, explicit = _settings_from(args)
-        make_reel(args.input, settings, ref=args.reference, style_file=args.style_file, explicit=explicit)
+        src = args.input[0] if len(args.input) == 1 else args.input
+        make_reel(src, settings, ref=args.reference, style_file=args.style_file, explicit=explicit)
         return 0
     except PipelineError as e:
         print(f"\n\033[91mERROR:\033[0m {e}", file=sys.stderr)

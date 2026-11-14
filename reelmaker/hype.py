@@ -20,7 +20,7 @@ import numpy as np
 from .config import FPS, Settings
 from .director import EditPlan, _FALLBACK_MODELS, _have_credentials
 from .fx import Shot, source_span
-from .montage import (LANG_NAMES, _frames_b64, _name_text, _pcm, _pick, _windows, analyze, beat_grid,
+from .montage import (GRID, LANG_NAMES, _frames_b64, _name_text, _pcm, _pick, _windows, analyze, beat_grid,
                       excitement)
 from .utils import MediaInfo, log, probe, warn
 
@@ -387,17 +387,24 @@ _SCHEMA = {
         "reels": {"type": "array", "items": {
             "type": "object",
             "properties": {
-                "moments": {"type": "array", "items": {"type": "integer"}},
-                "focus": {"type": "array", "items": {
-                    "type": "object",
-                    "properties": {"clip": {"type": "integer"}, "x": {"type": "number"}, "y": {"type": "number"}},
-                    "required": ["clip", "x", "y"], "additionalProperties": False}},
                 "hook": {"type": "string"},
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "hashtags": {"type": "array", "items": {"type": "string"}},
+                "shots": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {
+                        "video": {"type": "integer"},
+                        "time": {"type": "number"},
+                        "align": {"type": "string", "enum": ["start", "center", "end"]},
+                        "effect": {"type": "string", "enum": ["auto", "slowmo", "speed_ramp", "normal"]},
+                        "x": {"type": "number"},
+                        "y": {"type": "number"},
+                    },
+                    "required": ["video", "time", "align", "effect", "x", "y"],
+                    "additionalProperties": False}},
             },
-            "required": ["moments", "focus", "hook", "title", "description", "hashtags"],
+            "required": ["hook", "title", "description", "hashtags", "shots"],
             "additionalProperties": False,
         }},
     },
@@ -407,64 +414,154 @@ _SCHEMA = {
 
 _SYSTEM = """You are a top short-form video editor making INSANE, high-energy vertical edits for TikTok, Reels and Shorts
 (think car / sport / phonk edits: speed ramps, slow motion, close-ups, flashes, everything on the beat).
-You get numbered still frames, each from a short candidate clip of a video without speech, with its time and an
-excitement score from audio/motion analysis. Build the reel(s):
-- moments: the clip numbers to use, in play order, exactly the number of clips asked for when there are enough good
-  ones. The first clips are the slow-motion intro under the title: make the very first one striking. The music DROPS
-  at the clip number given: put the single most intense, impressive moment there. After the drop keep variety: never
-  put two near-identical shots next to each other, mix close details and wide shots, and mostly keep the original time
-  order so the story builds. Skip intros, logos, title cards, black or blurry frames and repeated near-identical shots.
-- focus: for EVERY clip you use, the point of the most interesting detail for a close-up, as x and y from 0 to 1
-  measured from the top-left of the frame - e.g. a speedometer needle, a wheel, the exhaust, a face, a logo, the
-  subject itself. The editor zooms in there.
-- Different reels must not share clips.
-- hook: max 6 words, a punchy on-screen title, no emojis/hashtags, in the requested language. title: max 80
-  characters. description: 1-2 sentences. hashtags: 5-8 relevant ones starting with #. All text in the requested language."""
+
+You get a storyboard: still frames from one or more source videos. Each frame is labelled with its video number, its
+time in seconds and an excitement score from audio/motion analysis (higher = more action). Frames from the same video
+are in time order, so you can see what happens when. You also get the shot list of the edit, already cut to the music:
+for every shot its role (intro, build-up, DROP, hype...), its length and its planned speed effect.
+
+Choose the footage for every shot:
+- shots: one entry per shot in the shot list, in the same order, exactly as many as listed.
+  video = the video number. time = the second where the key moment of that shot happens; use the frame times you saw,
+  or a time between two frames when the action clearly happens between them.
+  align = where that moment sits inside the shot: "start" (it happens right on the cut, on the beat), "center", or
+  "end" (the shot ends right after it, so the next shot follows the moment).
+  effect = "auto" (keep the planned speed), "slowmo", "speed_ramp" or "normal" (real speed). Change it only when it
+  serves the moment or the creator asked for it.
+  x, y = the point of the most interesting detail for a close-up, from 0 to 1 measured from the top-left of the frame
+  (a speedometer needle, a wheel, the exhaust, a face, a logo, the subject itself). The editor zooms in there.
+- The first shot opens the reel under the title and must be striking. The DROP shot gets the single most intense
+  moment. Never put two near-identical shots next to each other, mix close details and wide shots, and keep a story
+  that builds. Skip intros, logos, title cards, black or blurry frames.
+- With several videos, use footage from all of them unless the creator says otherwise, and connect them so it feels
+  like one edit, for example by cutting from an action in one video to a matching moment in another.
+- The creator's instructions come first. If they ask for an order, a specific moment, a cut from one video to another
+  or slow motion on something, do exactly that, and place the moment so it lands on a cut or on the drop.
+- Different reels must not reuse the same moments.
+- Always write the text, never leave it empty: hook = max 6 words, a punchy on-screen title, no emojis/hashtags.
+  title = max 80 characters. description = 1-2 sentences. hashtags = 5-8 relevant ones starting with #. All text in
+  the requested language. Write the text fields first, then the shots."""
+
+_ROLE = {"calm": "calm, slow motion", "build": "build-up, quick cut", "drop": "DROP - impact, most intense moment",
+         "high": "hype"}
+_SPEED = {"slowmo": "slow motion", "velocity": "speed ramp fast-slow-fast", "ramp_up": "slow, then shoots fast",
+          "ramp_down": "fast, then melts into slow motion", "stutter": "stutter repeat", "normal": "real speed"}
 
 
-def _claude_pick(src: Path, cands: list[tuple[float, float]], length: float, n_slots: int, drop_slot: int | None,
-                 count: int, settings: Settings, name_hint: str) -> list[dict] | None:
+@dataclass
+class Source:
+    """One input video, analysed."""
+    info: MediaInfo
+    an: dict
+    score: np.ndarray
+    lo: float
+    hi: float
+    fps: int
+
+    @property
+    def usable(self) -> float:
+        return max(0.1, self.hi - self.lo)
+
+    def score_at(self, t: float) -> float:
+        if len(self.score) == 0:
+            return 0.0
+        i = int(np.clip(t / GRID, 0, len(self.score) - 1))
+        return float(self.score[max(0, i - 2):i + 3].mean())
+
+
+def _storyboard(sources: list[Source], pool: list[tuple[int, float, float]], budget: int = 90) -> list[tuple[int, float, float]]:
+    """(video, time, score) frames for Claude: the most exciting candidates plus even coverage of every video."""
+    want = [max(8, int(math.ceil(s.usable))) for s in sources]          # about one frame per second...
+    if sum(want) > budget:                                              # ...shared out when there is a lot
+        want = [max(4, int(w * budget / sum(want))) for w in want]
+    while sum(want) > budget and max(want) > 2:                         # never more images than the budget
+        want[want.index(max(want))] -= 1
+    out: list[tuple[int, float, float]] = []
+    for si, s in enumerate(sources):
+        b = want[si]
+        step = s.usable / b
+        grid = [s.lo + step * (i + 0.5) for i in range(b)]             # even coverage, so events can be timed
+        # the most exciting candidate moments replace the nearest grid frame (exact timing on the action)
+        for c, _ in sorted(((c, sc) for v, c, sc in pool if v == si), key=lambda x: -x[1])[: max(1, b // 2)]:
+            k = int(np.argmin([abs(g - c) for g in grid]))
+            if abs(grid[k] - c) > 0.15:
+                grid[k] = c
+        out += [(si, round(t, 2), s.score_at(t)) for t in sorted(set(round(g, 2) for g in grid))]
+    return out
+
+
+def _shot_lines(template: list[Shot]) -> str:
+    lines = []
+    for j, sh in enumerate(template):
+        lines.append(f"{j + 1}. {_ROLE.get(sh.section, sh.section)}, {sh.duration:.2f}s, {_SPEED.get(sh.speed, sh.speed)}")
+    return "\n".join(lines)
+
+
+def _claude_shots(sources: list[Source], frames: list[tuple[int, float, float]], template: list[Shot], count: int,
+                  settings: Settings, names: list[str], save: Path | None = None) -> list[dict] | None:
     if settings.ai == "off" or (settings.ai == "auto" and not _have_credentials()):
         return None
     try:
         import anthropic
     except ImportError:
         return None
-    images = _frames_b64(src, [t0 + length / 2 for t0, _ in cands])
+    images: dict[tuple[int, float], str] = {}
+    for si, s in enumerate(sources):
+        ts = [t for v, t, _ in frames if v == si]
+        for t, img in zip(ts, _frames_b64(s.info.path, ts)):
+            images[(si, t)] = img
     content: list[dict] = []
-    for i, ((t0, sc), img) in enumerate(zip(cands, images)):
-        if not img:
-            continue
-        content.append({"type": "text", "text": f"[{i}] t={t0 + length / 2:.1f}s score={sc:+.2f}"})
-        content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img}})
-    if not content:
+    multi = len(sources) > 1
+    for si, s in enumerate(sources):
+        content.append({"type": "text", "text": f"=== Video {si + 1}: \"{names[si]}\" ({s.info.duration:.1f}s) ==="})
+        for v, t, sc in frames:
+            img = images.get((v, t))
+            if v != si or not img:
+                continue
+            content.append({"type": "text", "text": f"[video {si + 1} @ {t:.1f}s, score {sc:+.1f}]"})
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img}})
+    n_img = sum(1 for c in content if c["type"] == "image")
+    if not n_img:
         return None
     lang = LANG_NAMES.get((settings.text_language or "en").lower(), "English")
-    drop_txt = (f"The music drops at clip #{drop_slot + 1} of the reel." if drop_slot is not None
-                else "There is no big drop: open with the strongest shot.")
+    ask = (settings.prompt or "").strip()
     content.append({"type": "text", "text": (
-        f"Video file name: {name_hint}\nMake {count} reel{'s' if count > 1 else ''} with {n_slots} clips each. "
-        f"{drop_txt} Write all text in {lang}.")})
-    kwargs = dict(model=settings.ai_model, max_tokens=16000, system=_SYSTEM,
+        f"Shot list ({len(template)} shots, already cut to the music):\n{_shot_lines(template)}\n\n"
+        f"Make {count} reel{'s' if count > 1 else ''}. Write the hook, title, description and hashtags in {lang}.\n\n"
+        + (f"The creator's instructions:\n{ask}" if ask else "The creator gave no extra instructions."))})
+    kwargs = dict(model=settings.ai_model, max_tokens=64000, system=_SYSTEM,
                   messages=[{"role": "user", "content": content}],
-                  output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _SCHEMA}})
+                  output_config={"effort": "high" if (ask or multi) else "medium",
+                                 "format": {"type": "json_schema", "schema": _SCHEMA}})
     if settings.ai_model in _FALLBACK_MODELS:
         kwargs["betas"] = ["server-side-fallback-2026-07-01"]
         kwargs["fallbacks"] = "default"
-    log(AGENT, f"Claude is looking at {len(content) // 2} moments to pick the shots and close-ups...")
+    what = f"{len(sources)} videos" if multi else "the video"
+    log(AGENT, f"Claude is watching {what} ({n_img} frames)" + (" and reading your instructions" if ask else "")
+        + " to pick every shot...")
     try:
-        resp = anthropic.Anthropic().beta.messages.create(**kwargs)
+        with anthropic.Anthropic().beta.messages.stream(**kwargs) as stream:
+            resp = stream.get_final_message()
     except Exception as e:   # any API problem -> built-in picker
         warn(AGENT, f"Claude unavailable ({type(e).__name__}) - picking shots with the built-in rules")
         return None
-    if resp.stop_reason == "refusal":
+    if resp.stop_reason in ("refusal", "max_tokens"):
+        warn(AGENT, f"Claude could not finish ({resp.stop_reason}) - picking shots with the built-in rules")
         return None
-    text = next((b.text for b in resp.content if b.type == "text"), "")
+    text = "".join(b.text for b in resp.content if b.type == "text")
+    if save is not None:                      # kept for troubleshooting: what Claude decided and why
+        try:
+            save.write_text(json.dumps({"stop_reason": resp.stop_reason, "usage": resp.usage.to_dict(),
+                                        "instructions": ask, "answer": text}, ensure_ascii=False, indent=1),
+                            encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            pass
     try:
         reels = json.loads(text).get("reels") or []
     except (ValueError, AttributeError):
+        warn(AGENT, "Claude's answer could not be read - picking shots with the built-in rules")
         return None
-    return [r for r in reels if isinstance(r, dict) and r.get("moments")] or None
+    return [r for r in reels if isinstance(r, dict) and isinstance(r.get("shots"), list) and r["shots"]] or None
 
 
 # --------------------------------------------------------------------------- main entry
@@ -542,14 +639,26 @@ def _reel_map(song: Song | None, music: Path | None, settings: Settings, target:
             "hits": hits, "loop": loop, "note": note}
 
 
-def plan_hype(info: MediaInfo, settings: Settings, work: Path, count: int = 1) -> list[EditPlan]:
-    an = analyze(info, work)
-    score = excitement(an)
-    dur = max(0.1, info.duration)
-    intro = min(4.0, dur * 0.03) if dur > 12 else 0.0
-    outro = min(6.0, dur * 0.05) if dur > 12 else 0.0
-    lo, hi = intro, min(dur, max(intro + 1.0, dur - outro))
-    usable = max(0.1, hi - lo)
+_EFFECT = {"slowmo": "slowmo", "speed_ramp": "velocity", "normal": "normal"}
+
+
+def plan_hype(infos: MediaInfo | list[MediaInfo], settings: Settings, works: Path | list[Path],
+              count: int = 1) -> list[EditPlan]:
+    """Plans the insane edit from one or more videos. With Claude, the creator's instructions steer the shots."""
+    from .fx import _src_fps, time_map
+    if isinstance(infos, MediaInfo):
+        infos, works = [infos], [works]
+    multi = len(infos) > 1
+    sources: list[Source] = []
+    for info, w in zip(infos, works):
+        an = analyze(info, w)
+        dur = max(0.1, info.duration)
+        skip_from = 45.0 if multi else 12.0       # clips the creator picked are used whole; long videos skip intros
+        intro = min(4.0, dur * 0.03) if dur > skip_from else 0.0
+        outro = min(6.0, dur * 0.05) if dur > skip_from else 0.0
+        sources.append(Source(info, an, excitement(an), intro, min(dur, max(intro + 1.0, dur - outro)),
+                              _src_fps(info)))
+    usable = sum(s.usable for s in sources)
     count = max(1, min(int(count), 5))
     max_len = settings.effective_max()
     # slow motion and ramps stretch footage, so even short videos can fill a longer edit
@@ -565,90 +674,129 @@ def plan_hype(info: MediaInfo, settings: Settings, work: Path, count: int = 1) -
         if song is None:
             warn(AGENT, "No clear beat in the music - cutting at a steady pace instead")
     rm = _reel_map(song, music if song else None, settings, target)
-    from .fx import _src_fps
-    src_fps = _src_fps(info)
+    fps0 = sources[0].fps
     half_ok = rm["unit"] / 2 >= MIN_CLIP
     slots = build_slots(rm["labels"], rm["drops"], rm["NU"], settings.pacing, half_ok)
-    template, sfx = design_shots(slots, rm["unit"], rm["beat"], rm["hits"], src_fps, settings.pacing)
-    spans = [source_span(sh, src_fps) for sh in template]
+    template, sfx = design_shots(slots, rm["unit"], rm["beat"], rm["hits"], fps0, settings.pacing)
     n = len(template)
     total = sum(sh.frames for sh in template) / FPS
     drop_slot = next((i for i, sh in enumerate(template) if sh.section == "drop"), None)
-    log(AGENT, f"Insane edit: {n} shots, {total:.1f}s ({rm['note']})")
+    log(AGENT, f"Insane edit: {n} shots, {total:.1f}s from {len(sources)} video{'s' if multi else ''} ({rm['note']})")
 
-    # candidate moments over the whole video
-    Lc = float(np.clip(np.median(spans) if spans else 1.2, 0.6, 2.0))
-    Lc = min(Lc, usable)
+    # candidate moments in every video (each video gets its share)
+    spans0 = [source_span(sh, fps0) for sh in template]
+    Lc = float(np.clip(np.median(spans0) if spans0 else 1.2, 0.6, 2.0))
     pool_n = min(60, max(n * count + 10, int(n * count * 1.3)))
-    pool = sorted(_pick(_windows(an, score, Lc, lo, hi), Lc, pool_n, [], usable / (pool_n * 2.5)),
-                  key=lambda w: w[0])
+    pool: list[tuple[int, float, float]] = []          # (video, centre second, score)
+    for si, s in enumerate(sources):
+        L = min(Lc, s.usable)
+        k_s = max(3, int(round(pool_n * s.usable / usable)))
+        for t0, sc in _pick(_windows(s.an, s.score, L, s.lo, s.hi), L, k_s, [], s.usable / (k_s * 2.5)):
+            pool.append((si, t0 + L / 2, sc))
     if not pool:
-        pool = [(lo, 0.0)]
-    title_hint, name_tags = _name_text(info.path.stem)
-    ai_reels = _claude_pick(info.path, pool, Lc, n, drop_slot, count, settings, title_hint) if len(pool) > 1 else None
+        pool = [(si, (s.lo + s.hi) / 2, 0.0) for si, s in enumerate(sources)]
+    names = [_name_text(s.info.path.stem)[0] or s.info.path.stem for s in sources]
+    title_hint, name_tags = _name_text(sources[0].info.path.stem)
+    frames = _storyboard(sources, pool)
+    ai_reels = (_claude_shots(sources, frames, template, count, settings, names, save=works[0] / "claude_shots.json")
+                if frames else None)
+    if settings.prompt and not ai_reels:
+        warn(AGENT, "Your instructions need Claude (an API key) - editing with the built-in rules instead")
 
-    taken: list[tuple[float, float]] = []
+    taken: list[tuple[int, float, float]] = []      # (video, start, end) used by earlier reels
     plans: list[EditPlan] = []
     for k in range(count):
         ai = ai_reels[k] if ai_reels and k < len(ai_reels) else None
+        ai_shots = [c for c in ai["shots"] if isinstance(c, dict)] if ai else []
+        # built-in order: best first, 2nd best on the drop, the rest video by video in time order -
+        # every video gets a share of the shots that matches its length
+        ranked = sorted(range(len(pool)), key=lambda i: -pool[i][2])
         order: list[int] = []
-        if ai and isinstance(ai.get("moments"), list):
-            order = [i for i in ai["moments"] if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(pool)]
-        focus: dict[int, tuple[float, float]] = {}
-        if ai and isinstance(ai.get("focus"), list):
-            for f in ai["focus"]:
-                try:
-                    focus[int(f["clip"])] = (float(np.clip(f["x"], 0.05, 0.95)), float(np.clip(f["y"], 0.08, 0.92)))
-                except (KeyError, TypeError, ValueError):
-                    continue
-        if len(order) < n:                    # built-in: best first, 2nd best on the drop, rest in time order
-            ranked = sorted(range(len(pool)), key=lambda i: -pool[i][1])
-            rest = [i for i in ranked if i not in order]
-            if not order and rest:
-                order.append(rest.pop(0))
-                if drop_slot is not None and rest:
-                    hero = rest.pop(0)
-                    filler = sorted(rest, key=lambda i: pool[i][0])
-                    rest = filler[:max(0, drop_slot - 1)] + [hero] + filler[max(0, drop_slot - 1):]
-                else:
-                    rest = sorted(rest, key=lambda i: pool[i][0])
-            order += rest
-        own: list[tuple[float, float]] = []
+        if ranked:
+            hook_i = ranked[0]
+            hero = ranked[1] if drop_slot is not None and len(ranked) > 1 else None
+            share = [max(1, int(round(n * s.usable / usable))) for s in sources]
+            main: list[int] = []
+            spare: list[int] = []
+            for si in range(len(sources)):
+                mine = [i for i in ranked if pool[i][0] == si and i not in (hook_i, hero)]
+                main += sorted(mine[:share[si]], key=lambda i: pool[i][1])
+                spare += mine[share[si]:]
+            order = [hook_i] + main
+            if hero is not None:
+                pos = max(1, drop_slot)
+                order = order[:pos] + [hero] + order[pos:]
+            order += sorted(spare, key=lambda i: (pool[i][0], pool[i][1]))
+        own: list[tuple[int, float, float]] = []
 
-        def free(a: float, b: float) -> bool:
-            return not any(a < tb - 0.05 and b > ta + 0.05 for ta, tb in taken + own)
+        def free(si: int, a: float, b: float) -> bool:
+            return not any(v == si and a < tb - 0.05 and b > ta + 0.05 for v, ta, tb in taken + own)
 
         shots: list[Shot] = []
+        spans: list[float] = []
         used = 0
         cursor = 0
         for j, tmpl in enumerate(template):
-            S = spans[j]
-            choice = None
-            tries = 0
-            while tries < len(order) and choice is None:
-                mi = order[(cursor + tries) % len(order)] if order else 0
-                centre = pool[mi][0] + Lc / 2
-                for shift in (0.0, S, -S, 2 * S):
-                    a = min(max(lo, centre - S / 2 + shift), max(lo, hi - S))
-                    if free(a, a + S):
-                        choice = (mi, a)
-                        break
-                tries += 1
-            if choice is None:                                     # out of fresh footage: reuse a moment
-                mi = order[cursor % len(order)] if order else 0
-                a = min(max(lo, pool[mi][0] + Lc / 2 - S / 2), max(lo, hi - S))
-                choice = (mi, a)
-                cursor += 1
-            else:
-                cursor += tries
-                used += 1
-            mi, a = choice
             sh = Shot(**{**tmpl.to_dict(), "events": [list(e) for e in tmpl.events]})
-            sh.src_start = round(math.floor(a * FPS + 1e-6) / FPS, 4)   # floor: never past the end
-            sh.focus = focus.get(mi)
             sh.letterbox = tuple(tmpl.letterbox)
+            placed = False
+            c = ai_shots[j] if j < len(ai_shots) else None
+            if c is not None:
+                try:
+                    si = int(c.get("video", 1)) - 1
+                    T = float(c.get("time"))
+                except (TypeError, ValueError, OverflowError):
+                    si, T = -1, 0.0
+                if 0 <= si < len(sources) and math.isfinite(T):
+                    s = sources[si]
+                    if c.get("effect") in _EFFECT:
+                        sh.speed = _EFFECT[c["effect"]]
+                        sh.base_speed = 1.0 if sh.speed == "normal" else sh.base_speed
+                    S = source_span(sh, s.fps)
+                    D = sh.duration
+                    u_al = {"start": min(0.1, D * 0.15), "end": max(D * 0.75, D - 0.18)}.get(c.get("align"), D / 2)
+                    u, smap = time_map(sh, s.fps)
+                    a = min(max(T, 0.0), s.info.duration) - float(np.interp(u_al, u, smap))
+                    a = min(max(0.0, a), max(0.0, s.info.duration - S - 0.02))
+                    sh.source = si
+                    sh.src_start = round(math.floor(a * FPS + 1e-6) / FPS, 4)
+                    try:
+                        fx_, fy_ = float(c["x"]), float(c["y"])
+                        sh.focus = ((float(np.clip(fx_, 0.05, 0.95)), float(np.clip(fy_, 0.08, 0.92)))
+                                    if math.isfinite(fx_) and math.isfinite(fy_) else None)
+                    except (KeyError, TypeError, ValueError, OverflowError):
+                        sh.focus = None
+                    placed = True
+                    used += 1
+            if not placed:                                   # built-in pick
+                choice = None
+                tries = 0
+                while tries < len(order) and choice is None:
+                    si, centre, _ = pool[order[(cursor + tries) % len(order)]]
+                    s = sources[si]
+                    S = source_span(sh, s.fps)
+                    for shift in (0.0, S, -S, 2 * S):
+                        a = min(max(s.lo, centre - S / 2 + shift), max(s.lo, s.hi - S))
+                        if free(si, a, a + S):
+                            choice = (si, a)
+                            break
+                    tries += 1
+                if choice is None:                           # out of fresh footage: reuse a moment
+                    si, centre, _ = pool[order[cursor % len(order)]]
+                    s = sources[si]
+                    S = source_span(sh, s.fps)
+                    choice = (si, min(max(s.lo, centre - S / 2), max(s.lo, s.hi - S)))
+                    cursor += 1
+                else:
+                    cursor += tries
+                    used += 1
+                si, a = choice
+                sh.source = si
+                sh.src_start = round(math.floor(a * FPS + 1e-6) / FPS, 4)   # floor: never past the end
+            S = source_span(sh, sources[sh.source].fps)
             shots.append(sh)
-            own.append((sh.src_start, sh.src_start + S))
+            spans.append(S)
+            own.append((sh.source, sh.src_start, sh.src_start + S))
         if k > 0 and used < min(n, max(3, n // 2)):
             break                                                  # not enough fresh material for another reel
         taken += own
@@ -659,6 +807,7 @@ def plan_hype(info: MediaInfo, settings: Settings, work: Path, count: int = 1) -
                         decided_by="Claude" if ai else "rules", mode="montage",
                         music_start=round(rm["start"], 4), music_loop=round(rm["loop"], 4))
         plan.shots = shots
+        plan.sources = [s.info for s in sources]
         plan.sfx_events = list(sfx)
         first_drop = next((sh.out_start for sh in shots if sh.section == "drop"), None)
         if first_drop is not None and 1.2 <= first_drop <= 6.5:
@@ -671,8 +820,12 @@ def plan_hype(info: MediaInfo, settings: Settings, work: Path, count: int = 1) -
             if ai.get("hashtags"):
                 plan.hashtags = [t if t.startswith("#") else "#" + t
                                  for t in (str(x).strip().replace(" ", "") for x in ai["hashtags"]) if t]
+        mix = ""
+        if multi:
+            per = [sum(1 for sh in shots if sh.source == si) for si in range(len(sources))]
+            mix = " | shots per video: " + ", ".join(f"{i + 1}:{c}" for i, c in enumerate(per))
         log(AGENT, f"Insane reel {k + 1}: {len(shots)} shots, {total:.1f}s, decided by {plan.decided_by}"
-                   + (f' | hook "{plan.hook}"' if plan.hook else ""))
+                   + (f' | hook "{plan.hook}"' if plan.hook else "") + mix)
         plans.append(plan)
     if count > 1 and len(plans) < count:
         warn(AGENT, f"The video only has material for {len(plans)} good reel(s), not {count}.")
